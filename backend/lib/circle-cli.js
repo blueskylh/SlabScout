@@ -142,10 +142,9 @@ async function circleGatewayBalance({ address, chain = 'ARC-TESTNET' }) {
   return { ...result, parsed: parseJsonOutput(result.stdout), normalized: normalizeCircleEnvelope(parseJsonOutput(result.stdout)) }
 }
 
-async function circleServicesPay({ url, address, chain = 'ARC-TESTNET', maxAmountUsdc, method = 'POST', data, timeoutSeconds = 60, idempotencyKey }) {
+async function circleServicesPay({ url, address, chain = 'ARC-TESTNET', maxAmountUsdc, method = 'POST', data, timeoutSeconds = 60 }) {
   assertEvmAddress(address, 'address')
   const args = ['services', 'pay', url, '--quiet', '--address', address, '--chain', chain, '--max-amount', String(maxAmountUsdc), '--method', method, '--timeout', String(timeoutSeconds), '--output', 'json']
-  if (idempotencyKey) args.push('--idempotency-key', String(idempotencyKey))
   if (data !== undefined) args.push('--data', JSON.stringify(data))
   const result = await runCircle(args, { timeoutMs: (timeoutSeconds + 15) * 1000 })
   const parsed = parseJsonOutput(result.stdout)

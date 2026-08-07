@@ -85,8 +85,14 @@ export default function App() {
   const offers = demo?.offers || FALLBACK_OFFERS
   const selectedOffer = useMemo(() => offers.find((offer) => offer.id === selectedOfferId) || offers[0], [offers, selectedOfferId])
 
+  const reconciliationActive = mode === 'live' && (
+    result?.executionStatus === 'reconciliation-required' ||
+    result?.payment?.status === 'reconciliation_required' ||
+    result?.escrow?.status === 'reconciliation_required'
+  )
+
   async function execute() {
-    if (!selectedOffer) return
+    if (!selectedOffer || reconciliationActive) return
     setLoading(true)
     setError(null)
     try {
@@ -94,7 +100,8 @@ export default function App() {
       if (mode === 'live' && liveKey && !pendingLiveIdempotencyKey) setPendingLiveIdempotencyKey(liveKey)
       const next = await runScout({ mode, offerId: selectedOffer.id, authorization, idempotencyKey: liveKey, operatorToken: mode === 'live' ? operatorToken : undefined })
       setResult(next)
-      if (mode === 'live') setPendingLiveIdempotencyKey(null)
+      const reconciliation = next.executionStatus === 'reconciliation-required' || next.payment?.status === 'reconciliation_required' || next.escrow?.status === 'reconciliation_required'
+      if (mode === 'live' && !reconciliation) setPendingLiveIdempotencyKey(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -152,12 +159,13 @@ export default function App() {
               <button
                 type="button"
                 onClick={execute}
-                disabled={loading || (mode === 'live' && !operatorToken)}
+                disabled={loading || reconciliationActive || (mode === 'live' && !operatorToken)}
                 className="rounded-2xl bg-brand-100 px-5 py-3 text-sm font-black text-white shadow-lg shadow-pink-500/20 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? 'Agent running…' : mode === 'live' && !operatorToken ? 'Live requires operator token' : 'Run SlabScout Agent'}
+                {loading ? 'Agent running…' : reconciliationActive ? 'Manual reconciliation required' : mode === 'live' && !operatorToken ? 'Live requires operator token' : 'Run SlabScout Agent'}
               </button>
               <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；非证书类故障会进入 REPLAY_FALLBACK，但真实支付/锁仓会被禁止。</p>
+              {reconciliationActive ? <p className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs font-bold leading-5 text-amber-700">当前 Live run 需要人工核对 Circle/Arc 状态；保留关联 idempotencyKey，禁止在核对前开启新的 Live run。</p> : null}
             </div>
           </div>
         </header>

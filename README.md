@@ -53,7 +53,7 @@ Implemented after baseline `c14a5b4` and hardened further on `final/agentic-econ
 
 Not yet complete because external credentials/funds/deployment are missing:
 
-- Real Circle Agent Wallet/x402 payment is wired through Circle CLI `0.0.6`-style envelopes + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured.
+- Real Circle Agent Wallet/x402 payment is wired through Circle CLI `0.0.6`-style envelopes + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured. `services pay` relies on SlabScout application-level idempotency; wallet `approve/reserve` uses Circle wallet-execute external idempotency keys.
 - Real Arc escrow reserve is wired through Circle CLI `approve`/`reserve` plus Arc RPC receipt/event verification, but remains unavailable until the escrow contract is deployed and the wallet is funded/authorized.
 - Public MVP URL, video, deck export link and real tx evidence are pending user/deployment steps.
 
@@ -125,7 +125,8 @@ This execution environment does not have `forge` installed; contract tests are c
 
 ## API routes
 
-- `GET /api/status` — runtime status and missing live env list.
+- `GET /api/status` — runtime status and config-only missing live env list.
+- `GET /api/status/live-readiness` — operator-token protected, read-only live readiness checks; never pays or sends transactions.
 - `GET /api/demo` — trusted offers, default authorization, replay signal, disclosures.
 - `POST /api/scout/run` — full orchestration. Public replay; live requires `x-slabscout-operator-token`.
 - `GET /api/scout/audits` — audit trail.

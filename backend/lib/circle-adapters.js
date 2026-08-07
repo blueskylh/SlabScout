@@ -10,9 +10,9 @@ const {
 const { nonZeroAddress, validProofHash, validateRuntimeConfig, assertValid, pickAuthorizationFields } = require('../../packages/shared/validation')
 const { verifyMarketProof, verifyPolicyProof, verifyPaymentReceipt } = require('../../packages/market-proof')
 const { persistentStoreConfigured } = require('./state-store')
-const { circleServicesPay, circleWalletExecute, normalizeServicesPayResult } = require('./circle-cli')
+const { circleServicesPay, circleWalletExecute, normalizeServicesPayResult, extractTxHash, extractCircleTransactionId } = require('./circle-cli')
 const defaultArcOps = require('./arc-rpc')
-const { assertArcChain, getAllowance, getReservation, waitForReceipt, validateReservedEvent, RPC_URL } = defaultArcOps
+const { RPC_URL } = defaultArcOps
 
 function deterministicHash(prefix, payload) {
   return `${prefix}${crypto.createHash('sha256').update(stableJson(payload)).digest('hex')}`
@@ -42,6 +42,25 @@ function missingLiveEscrowEnv() {
   const required = ['RESERVATION_ESCROW_ADDRESS', 'AGENT_WALLET_ADDRESS']
   if (!persistentStoreConfigured()) required.push('SLABSCOUT_STATE_FILE')
   return required.filter((key) => !process.env[key])
+}
+
+function reconciliationSubmission(source = {}) {
+  if (!source || typeof source !== 'object') return null
+  const txHash = source.txHash || source.submission?.txHash || source.result?.txHash || extractTxHash(source.parsed || source.result || source)
+  const circleTransactionId = source.circleTransactionId || source.submission?.circleTransactionId || source.result?.circleTransactionId || extractCircleTransactionId(source.parsed || source.result || source)
+  const submitted = Boolean(txHash || circleTransactionId || source.operationSubmitted === true || source.submission?.operationSubmitted === true || source.code === 'circle-cli-timeout')
+  return submitted ? {
+    submitted,
+    txHash: txHash || null,
+    circleTransactionId: circleTransactionId || null,
+    operation: source.operation || source.submission?.operation || null,
+    offerHash: source.offerHash || source.submission?.offerHash || null,
+    externalIdempotencyKey: source.externalIdempotencyKey || source.submission?.externalIdempotencyKey || null,
+  } : null
+}
+
+function isReconciliationError(error) {
+  return Boolean(reconciliationSubmission(error))
 }
 
 function reconciliationPayment({ receiptPayload, reason, operation = 'services-pay', circleTransactionId = null, txHash = null }) {
@@ -190,7 +209,6 @@ async function payForMarketProof({ runId, idempotencyKey, offer, authorization, 
       maxAmountUsdc: amountUsdc,
       method: 'POST',
       data: { mode: 'live', offerId: offer.id, runId, idempotencyKey, authorization: authorizationSnapshot(authorization) },
-      idempotencyKey,
       timeoutSeconds: Number(process.env.CIRCLE_CLI_TIMEOUT_SECONDS || 60),
     })
   } catch (error) {
@@ -210,7 +228,8 @@ async function payForMarketProof({ runId, idempotencyKey, offer, authorization, 
         note: 'Install and login Circle CLI testnet agent wallet before live payment.',
       }
     }
-    return reconciliationPayment({ receiptPayload, reason: error.message, circleTransactionId: error.circleTransactionId || null, txHash: error.txHash || null })
+    const submitted = reconciliationSubmission(error)
+    return reconciliationPayment({ receiptPayload, reason: error.message, operation: submitted?.operation || 'services-pay', circleTransactionId: submitted?.circleTransactionId || null, txHash: submitted?.txHash || null })
   }
 
   const servicesPay = paid.servicesPay || normalizeServicesPayResult(paid)
@@ -383,8 +402,9 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
       const approvalReceipt = await arcOps.waitForReceipt(approval.txHash, { rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
       if (approvalReceipt.status !== '0x1') throw new Error('USDC approve transaction failed')
     } catch (error) {
-      if (approval?.txHash || error.txHash || error.code === 'circle-cli-timeout') {
-        return reconciliationReservation({ payload, offerHash, verification, operation: 'approve', reason: error.message, txHash: approval?.txHash || error.txHash || null, circleTransactionId: approval?.circleTransactionId || error.circleTransactionId || null, externalIdempotencyKey: approveIdempotencyKey })
+      const submitted = reconciliationSubmission(approval) || reconciliationSubmission(error)
+      if (submitted) {
+        return reconciliationReservation({ payload, offerHash, verification, operation: 'approve', reason: error.message, txHash: submitted.txHash, circleTransactionId: submitted.circleTransactionId, externalIdempotencyKey: approveIdempotencyKey })
       }
       throw error
     }
@@ -424,8 +444,9 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
       verification,
     }
   } catch (error) {
-    if (reserve?.txHash || error.txHash || error.code === 'circle-cli-timeout') {
-      return reconciliationReservation({ payload, offerHash, verification, operation: 'reserve', reason: error.message, txHash: reserve?.txHash || error.txHash || null, circleTransactionId: reserve?.circleTransactionId || error.circleTransactionId || null, externalIdempotencyKey: reserveIdempotencyKey })
+    const submitted = reconciliationSubmission(reserve) || reconciliationSubmission(error)
+    if (submitted) {
+      return reconciliationReservation({ payload, offerHash, verification, operation: 'reserve', reason: error.message, txHash: submitted.txHash, circleTransactionId: submitted.circleTransactionId, externalIdempotencyKey: reserveIdempotencyKey })
     }
     throw error
   }
@@ -438,4 +459,6 @@ module.exports = {
   assertBaseRuntimeConfig,
   missingLivePaymentEnv,
   missingLiveEscrowEnv,
+  reconciliationSubmission,
+  isReconciliationError,
 }

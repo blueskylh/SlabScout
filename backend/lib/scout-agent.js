@@ -11,7 +11,7 @@ const { validateAuthorization, validateOffer, validateRuntimeConfig, assertValid
 const { getCardSignal } = require('../../packages/renaiss-client')
 const { evaluateSignal, finalizeWithProof } = require('../../packages/policy-engine')
 const { buildMarketProof, buildPolicyProof, verifyMarketProof, assertLiveSigningSecret } = require('../../packages/market-proof')
-const { payForMarketProof, reserveEscrow } = require('./circle-adapters')
+const { payForMarketProof, reserveEscrow, isReconciliationError, reconciliationSubmission } = require('./circle-adapters')
 const { appendAudit } = require('./audit-log')
 const stateStore = require('./state-store')
 const { resolveEffectiveMode } = require('./mode')
@@ -295,8 +295,14 @@ async function runScout(body = {}) {
     await stateStore.saveRunResult(id, finalResult)
     return finalResult
   } catch (error) {
-    await stateStore.markRunStage(id, error.status === 'unknown' ? 'reconciliation-required' : 'failed', { error: error.message })
-    await stateStore.releaseBudget(id)
+    if (isReconciliationError(error)) {
+      const submitted = reconciliationSubmission(error)
+      await stateStore.markRunStage(id, 'reconciliation-required', { error: error.message, ...submitted })
+      await stateStore.releaseBudget(id, 'reconciliation-held')
+    } else {
+      await stateStore.markRunStage(id, 'failed', { error: error.message })
+      await stateStore.releaseBudget(id)
+    }
     throw error
   }
 }

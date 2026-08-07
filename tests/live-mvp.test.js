@@ -8,7 +8,7 @@ const { replayCardDetail, replayFmvSeries, replayTrades, replayCertLookup, repla
 const { buildPolicyProof, verifyMarketProof } = require('../packages/market-proof')
 const { getReplaySignal } = require('../packages/renaiss-client')
 const { evaluateSignal } = require('../packages/policy-engine')
-const { resetStateForTests } = require('../backend/lib/state-store')
+const { resetStateForTests, getBudgetHold } = require('../backend/lib/state-store')
 const { appendAudit } = require('../backend/lib/audit-log')
 const { reserveEscrow } = require('../backend/lib/circle-adapters')
 const { RPC_URL } = require('../backend/lib/arc-rpc')
@@ -79,18 +79,31 @@ function mockRenaissFetch() {
   return () => { global.fetch = prevFetch }
 }
 
-function request(app, { path = '/api/scout/audits', headers = {} } = {}) {
+function request(app, { path = '/api/scout/audits', method = 'GET', body = null, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const server = app.listen(0, () => {
-      const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path, method: 'GET', headers }, (res) => {
+      const payload = body ? JSON.stringify(body) : ''
+      const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path, method, headers: { ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}), ...headers } }, (res) => {
         let data = ''
         res.on('data', (chunk) => { data += chunk })
         res.on('end', () => server.close(() => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null })))
       })
       req.on('error', (error) => server.close(() => reject(error)))
+      if (payload) req.write(payload)
       req.end()
     })
   })
+}
+
+function proofBody(overrides = {}) {
+  return {
+    mode: 'live',
+    offerId: DEMO_OFFERS[0].id,
+    runId: 'run_x402_preflight',
+    idempotencyKey: 'idem_x402_preflight',
+    authorization: DEFAULT_AUTHORIZATION,
+    ...overrides,
+  }
 }
 
 test.beforeEach(() => resetStateForTests())
@@ -103,6 +116,9 @@ test('P0 live UI/API source always sends live idempotencyKey and reuses pending 
   assert.match(idem, /Live run requires an idempotencyKey/)
   assert.match(app, /pendingLiveIdempotencyKey \|\| createLiveIdempotencyKey/)
   assert.match(app, /idempotencyKey: liveKey/)
+  assert.match(app, /reconciliationActive/)
+  assert.match(app, /Manual reconciliation required/)
+  assert.match(app, /mode === 'live' && !reconciliation\) setPendingLiveIdempotencyKey\(null\)/)
 })
 
 test('P0 circle-cli keeps txHash/proofHash while redacting private credentials', () => {
@@ -117,6 +133,9 @@ test('P0 circle-cli keeps txHash/proofHash while redacting private credentials',
   assert.doesNotMatch(out, new RegExp(privateKeyLabel))
   assert.doesNotMatch(out, /rk_secretvalue/)
   assert.equal(CIRCLE_CLI_VERIFIED_VERSION_RANGE, '0.0.6')
+  const cliSource = fs.readFileSync('backend/lib/circle-cli.js', 'utf8')
+  const servicesPaySource = cliSource.match(/async function circleServicesPay[\s\S]*?async function circleWalletExecute/)?.[0] || ''
+  assert.doesNotMatch(servicesPaySource, /--idempotency-key/)
 })
 
 test('P0 circle-cli normalizes wallet execute and services pay 0.0.6 envelopes', () => {
@@ -130,6 +149,51 @@ test('P0 circle-cli normalizes wallet execute and services pay 0.0.6 envelopes',
   assert.equal(quiet.ok, true)
   assert.equal(quiet.sellerResponse.payment.receiptId, 'receipt_1')
 })
+
+test('P0 unknown offerId and bad authorization fail before x402 gateway', async () => withEnv({ MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001' }, async () => {
+  const express = require('../backend/node_modules/express')
+  let gatewayCalls = 0
+  const app = express()
+  app.use(express.json())
+  app.use('/api/market-proof', marketProofRoute.createProofRouter({ gatewayMiddlewareFactory: () => (_req, _res, next) => { gatewayCalls += 1; next() } }))
+  const unknown = await request(app, { path: '/api/market-proof/prove', method: 'POST', body: proofBody({ offerId: 'unknown-offer' }) })
+  assert.equal(unknown.status, 400)
+  assert.equal(gatewayCalls, 0)
+  const badAuth = await request(app, { path: '/api/market-proof/prove', method: 'POST', body: proofBody({ authorization: { ...DEFAULT_AUTHORIZATION, maxIntelFeeUsdc: -1 } }) })
+  assert.equal(badAuth.status, 400)
+  assert.equal(gatewayCalls, 0)
+}))
+
+test('P0 legal x402 request keeps identical capped authorization before and after gateway', async () => withEnv({
+  MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
+  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001',
+}, async () => {
+  const restore = mockRenaissFetch()
+  try {
+    const express = require('../backend/node_modules/express')
+    let gatewayCalls = 0
+    let preGatewayAuth = null
+    const app = express()
+    app.use(express.json())
+    app.use('/api/market-proof', marketProofRoute.createProofRouter({ gatewayMiddlewareFactory: () => (req, _res, next) => {
+      gatewayCalls += 1
+      preGatewayAuth = JSON.stringify(req.validatedProofRequest.authorization)
+      req.payment = { verified: true, payer: '0xA9E0000000000000000000000000000000000001', amount: '1000', network: `eip155:${ARC_TESTNET_CHAIN_ID}`, transaction: `0x${'8'.repeat(64)}` }
+      next()
+    } }))
+    const body = proofBody({ authorization: { ...DEFAULT_AUTHORIZATION, maxIntelFeeUsdc: 0.5, maxDepositUsdc: 0.5, spentTodayUsdc: 999 } })
+    const result = await request(app, { path: '/api/market-proof/prove', method: 'POST', body })
+    assert.equal(result.status, 200)
+    assert.equal(gatewayCalls, 1)
+    assert.equal(JSON.stringify(result.body.authorization), preGatewayAuth)
+    assert.equal(result.body.authorization.maxIntelFeeUsdc, 0.001)
+    assert.equal(result.body.authorization.maxDepositUsdc, 0.1)
+    assert.equal(result.body.authorization.spentTodayUsdc, 0)
+  } finally {
+    restore()
+  }
+}))
 
 test('P0 seller endpoint requires mode live, strict authorization, and returns proof verified by the main agent auth', async () => withEnv({
   MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
@@ -158,6 +222,29 @@ test('P0 seller endpoint requires mode live, strict authorization, and returns p
 test('P0 Arc RPC default uses .network endpoint', () => {
   assert.equal(RPC_URL, 'https://rpc.testnet.arc.network')
 })
+
+test('P0 live readiness is operator-protected and read-only injectable', async () => withEnv({
+  SLABSCOUT_OPERATOR_TOKEN: 'op',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-readiness.json`,
+  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
+}, async () => {
+  const status = require('../backend/routes/status')
+  const readiness = await status._internals.collectLiveReadiness({
+    circle: {
+      circleWalletStatus: async () => ({ ok: true, normalized: { cliVersion: '0.0.6' } }),
+      circleGatewayBalance: async () => ({ ok: true, parsed: { balances: [] } }),
+    },
+    arc: {
+      RPC_URL,
+      assertArcChain: async () => ARC_TESTNET_CHAIN_ID,
+      getCode: async () => '0x60016001',
+    },
+  })
+  assert.equal(readiness.readinessLevel, 'read-only-live-check')
+  assert.equal(readiness.ok, true)
+  assert.ok(readiness.checks.some((check) => check.label === 'escrow-bytecode'))
+}))
 
 test('P0 reserve receipt timeout returns reconciliation_required and preserves submitted tx metadata', async () => withEnv({
   ARC_EXECUTION_MODE: 'live',
@@ -196,6 +283,125 @@ test('P0 reserve receipt timeout returns reconciliation_required and preserves s
   assert.equal(escrow.circleTransactionId, 'circle_tx_reserve')
   assert.match(escrow.externalIdempotencyKey, new RegExp(`${runId}:reserve:0x[a-f0-9]{64}`))
 }))
+
+
+test('P0 reserve returns reconciliation_required when walletExecute returns only circleTransactionId', async () => withEnv({
+  ARC_EXECUTION_MODE: 'live',
+  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
+  AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  POLICY_PROOF_SIGNING_SECRET: 'live-policy-proof-test-secret',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-reserve-circle-id.json`,
+}, async () => {
+  const runId = 'run_reserve_circle_id'
+  const idempotencyKey = 'idem_reserve_circle_id'
+  const authorization = { ...DEFAULT_AUTHORIZATION, requireMarketProof: false }
+  const signal = { ...(await getReplaySignal({ offer: DEMO_OFFERS[0], authorization })), dataMode: 'live' }
+  const decision = evaluateSignal({ signal, offer: DEMO_OFFERS[0], authorization })
+  const proof = buildPolicyProof({ runId, idempotencyKey, signal, offer: DEMO_OFFERS[0], authorization, decision })
+  const escrow = await reserveEscrow({
+    runId,
+    idempotencyKey,
+    offer: DEMO_OFFERS[0],
+    proof,
+    authorization,
+    dataMode: 'live',
+    decision,
+    walletExecute: async () => ({ circleTransactionId: 'circle_tx_only' }),
+    arcOps: {
+      assertArcChain: async () => ARC_TESTNET_CHAIN_ID,
+      getReservation: async () => ({ status: 0 }),
+      getAllowance: async () => 100000000n,
+      waitForReceipt: async () => { throw new Error('should not wait without txHash') },
+      validateReservedEvent: () => null,
+    },
+  })
+  assert.equal(escrow.status, 'reconciliation_required')
+  assert.equal(escrow.circleTransactionId, 'circle_tx_only')
+  assert.equal(escrow.txHash, null)
+}))
+
+test('P0 non-timeout wallet error with circleTransactionId returns reconciliation_required', async () => withEnv({
+  ARC_EXECUTION_MODE: 'live',
+  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
+  AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  POLICY_PROOF_SIGNING_SECRET: 'live-policy-proof-test-secret',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-reserve-error-circle-id.json`,
+}, async () => {
+  const runId = 'run_reserve_error_circle_id'
+  const idempotencyKey = 'idem_reserve_error_circle_id'
+  const authorization = { ...DEFAULT_AUTHORIZATION, requireMarketProof: false }
+  const signal = { ...(await getReplaySignal({ offer: DEMO_OFFERS[0], authorization })), dataMode: 'live' }
+  const decision = evaluateSignal({ signal, offer: DEMO_OFFERS[0], authorization })
+  const proof = buildPolicyProof({ runId, idempotencyKey, signal, offer: DEMO_OFFERS[0], authorization, decision })
+  const escrow = await reserveEscrow({
+    runId,
+    idempotencyKey,
+    offer: DEMO_OFFERS[0],
+    proof,
+    authorization,
+    dataMode: 'live',
+    decision,
+    walletExecute: async () => { const error = new Error('submitted but post-submit query failed'); error.circleTransactionId = 'circle_tx_error'; throw error },
+    arcOps: {
+      assertArcChain: async () => ARC_TESTNET_CHAIN_ID,
+      getReservation: async () => ({ status: 0 }),
+      getAllowance: async () => 100000000n,
+      waitForReceipt: async () => { throw new Error('should not be reached') },
+      validateReservedEvent: () => null,
+    },
+  })
+  assert.equal(escrow.status, 'reconciliation_required')
+  assert.equal(escrow.circleTransactionId, 'circle_tx_error')
+}))
+
+async function runScoutWithSubmittedReserveError(errorFactory, stateSuffix) {
+  const scoutPath = require.resolve('../backend/lib/scout-agent')
+  const adapterPath = require.resolve('../backend/lib/circle-adapters')
+  delete require.cache[scoutPath]
+  const adapters = require('../backend/lib/circle-adapters')
+  const originalReserve = adapters.reserveEscrow
+  let capturedRunId = null
+  adapters.reserveEscrow = async ({ runId }) => {
+    capturedRunId = runId
+    throw errorFactory(runId)
+  }
+  const restoreFetch = mockRenaissFetch()
+  try {
+    const { runScout } = require('../backend/lib/scout-agent')
+    await withEnv({
+      MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
+      POLICY_PROOF_SIGNING_SECRET: 'live-policy-proof-test-secret',
+      SLABSCOUT_STATE_FILE: `/tmp/slabscout-${process.pid}-${stateSuffix}.json`,
+      SLABSCOUT_OPERATOR_TOKEN: 'op',
+    }, async () => {
+      await assert.rejects(() => runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: `idem_${stateSuffix}`, authorization: { ...DEFAULT_AUTHORIZATION, requireMarketProof: false }, operatorAuthorized: true }), /submitted/)
+      const hold = await getBudgetHold(capturedRunId)
+      assert.equal(hold.status, 'reconciliation-held')
+    })
+  } finally {
+    restoreFetch()
+    adapters.reserveEscrow = originalReserve
+    delete require.cache[scoutPath]
+  }
+}
+
+test('P0 runScout keeps budget reconciliation-held for submitted circleTransactionId without txHash', async () => {
+  await runScoutWithSubmittedReserveError((runId) => {
+    const error = new Error(`submitted reserve ${runId}`)
+    error.circleTransactionId = 'circle_submitted_only'
+    error.operation = 'reserve'
+    error.operationSubmitted = true
+    return error
+  }, 'budget-circle-id')
+})
+
+test('P0 runScout keeps budget reconciliation-held for non-timeout submitted metadata error', async () => {
+  await runScoutWithSubmittedReserveError((runId) => {
+    const error = new Error(`submitted reserve ${runId}`)
+    error.submission = { operationSubmitted: true, operation: 'reserve', circleTransactionId: 'circle_submitted_metadata', offerHash: `0x${'9'.repeat(64)}`, externalIdempotencyKey: `${runId}:reserve:0x${'9'.repeat(64)}` }
+    return error
+  }, 'budget-submission-metadata')
+})
 
 test('P0 unauthorized audit fallback redacts full audit details', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct' }, async () => {
   const express = require('../backend/node_modules/express')

@@ -101,7 +101,7 @@ Do not deploy on mainnet. The script checks `block.chainid == 5042002` and USDC 
 Live MarketProof payment uses Circle Gateway nanopayments / x402 seller middleware:
 
 1. `/api/scout/run` verifies live operator auth and claims `idempotencyKey` before any external call.
-2. The buyer side calls Circle CLI: `circle services pay <MARKET_PROOF_SERVICE_URL> --address <CIRCLE_AGENT_WALLET_ADDRESS> --chain ARC-TESTNET --max-amount 0.001 ...`.
+2. The buyer side calls Circle CLI: `circle services pay <MARKET_PROOF_SERVICE_URL> --quiet --address <CIRCLE_AGENT_WALLET_ADDRESS> --chain ARC-TESTNET --max-amount 0.001 ...`. Circle CLI `services pay` is treated as application-level idempotent only: the request body carries SlabScout `idempotencyKey`, and the server-side paymentIntent prevents duplicate payment attempts. Circle CLI `0.0.6` does not provide a reliable native `--idempotency-key` for `services pay`, so the app does not pass one there.
 3. `/api/market-proof/prove` is protected by `createGatewayMiddleware` from `@circle-fin/x402-batching/server`, restricted to `eip155:5042002`.
 4. After the gateway verifies/settles payment, the seller endpoint refetches Renaiss data server-side and signs MarketProof.
 5. The buyer side re-verifies the returned payment receipt and MarketProof before escrow.
@@ -117,7 +117,7 @@ Live reserve uses Circle CLI wallet execution plus Arc RPC verification:
 3. Check whether the offerHash is already reserved; if yes, return `reconciliation_required` instead of sending a duplicate tx.
 4. Check USDC allowance from Agent Wallet to `ReservationEscrow`.
 5. If allowance is insufficient, call `approve(address,uint256)` through Circle CLI and wait for the tx receipt.
-6. Call `reserve(bytes32,address,uint256,bytes32,uint64)` through Circle CLI with external idempotency key `<run-id>:reserve:<offer-hash>`. Approval uses `<run-id>:approve:<offer-hash>`.
+6. Call `reserve(bytes32,address,uint256,bytes32,uint64)` through Circle CLI with native wallet-execute external idempotency key `<run-id>:reserve:<offer-hash>`. Approval uses `<run-id>:approve:<offer-hash>`.
 7. Wait for the reserve receipt and decode the `Reserved` event.
 8. Mark `chain-confirmed` only if receipt status and every event field match the expected offerHash, buyer, seller, amount, proofHash and refundAfter.
 
@@ -142,7 +142,8 @@ GitHub workflow `Live E2E (manual, secrets-gated)` runs readiness only by defaul
 
 ## Deployment smoke
 
-- `GET /api/status` returns 200 and lists missing live env if any.
+- `GET /api/status` returns 200, lists missing live env if any, and marks `readinessLevel=config-only` plus `liveConfigComplete`.
+- `GET /api/status/live-readiness` requires an operator token and performs read-only checks only: Circle CLI/session, configured wallet, Gateway balance, Arc chain ID/RPC, escrow bytecode, and state-file writability.
 - `GET /api/demo` returns 200.
 - Replay `POST /api/scout/run` with `offer-reshizard-95` returns policy `RESERVE` and execution `replay-simulated`.
 - Unknown offer returns 400.

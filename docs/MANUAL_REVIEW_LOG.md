@@ -91,3 +91,14 @@ This pass continued on `final/agentic-economy-mvp` without merging `main` and wi
 4. **Arc RPC/reconciliation pass** — the default RPC moved to `https://rpc.testnet.arc.network`; approve/reserve calls carry stable external idempotency keys; submitted tx receipt timeouts return `reconciliation_required` with tx metadata instead of ordinary failure.
 5. **Audit privacy pass** — unauthorized audit fallback now redacts memory-log fallback rows instead of returning full checks or payment receipt details.
 6. **Regression pass** — added tests for frontend live idempotency, Circle CLI hash/sanitization behavior, seller proof flow, Arc RPC default, receipt timeout reconciliation, and unauthorized audit redaction.
+
+## P0 x402 preflight and readiness continuation pass
+
+This pass continued from remote commit `30895211ab32c64065a0ff6ebf8e754eb41add3f` on `final/agentic-economy-mvp` without merging `main` and without executing live Circle/x402 payment or Arc approve/reserve.
+
+1. **x402 preflight pass** — all deterministic seller endpoint checks now run before Gateway middleware: exact `mode: live`, known offer, plain authorization object, unknown body/auth rejection, full merged authorization validation, bounded run/idempotency keys, and a server-capped authorization snapshot stored on the request.
+2. **Snapshot binding pass** — the paid seller handler now uses `req.validatedProofRequest` after x402 settlement instead of re-merging raw body data, so the signed proof and main Agent verifier use the same authorization snapshot.
+3. **Reconciliation classifier pass** — extracted a single submitted-operation classifier for txHash, Circle transaction ID, CLI timeout, and explicit submission metadata; approve/reserve and run-level catch paths use it consistently.
+4. **Services-pay idempotency pass** — removed the unsupported native `--idempotency-key` argument from Circle CLI `services pay`; SlabScout still sends idempotency in the request body and relies on paymentIntent state for application-level exactly-once behavior. Wallet execute still uses native external idempotency keys.
+5. **Readiness pass** — `/api/status` now advertises config-only readiness, and `/api/status/live-readiness` performs operator-protected read-only checks for Circle CLI/session, wallet, Gateway balance, Arc chain/RPC, escrow bytecode, and state-file writability.
+6. **Reconciliation UX pass** — frontend Live reconciliation keeps the existing idempotency key, disables the run button, and shows a manual Circle/Arc reconciliation warning.

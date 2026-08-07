@@ -268,6 +268,10 @@ async function listAudits({ redacted = true } = {}) {
   return withState((state) => (state.audit || []).slice(0, 500).map((row) => redacted ? redactAudit(row) : row))
 }
 
+async function getBudgetHold(runId) {
+  return withState((state) => state.budgetHolds[runId] || null)
+}
+
 function resetStateForTests() {
   memoryState = clone(DEFAULT_STATE)
   const file = stateFile()
@@ -293,6 +297,7 @@ module.exports = {
   isReceiptUsed,
   recordAudit,
   listAudits,
+  getBudgetHold,
   resetStateForTests,
   activeDailySpend,
 }

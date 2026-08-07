@@ -45,6 +45,10 @@ async function getReservation({ escrow, offerHash, rpcUrl }) {
   return { buyer: decoded[0], seller: decoded[1], amount: decoded[2], proofHash: decoded[3], refundAfter: decoded[4], status: Number(decoded[5]) }
 }
 
+async function getCode({ address, rpcUrl }) {
+  return rpc('eth_getCode', [address, 'latest'], { rpcUrl })
+}
+
 async function waitForReceipt(txHash, { rpcUrl, timeoutMs = 120_000, intervalMs = 3_000 } = {}) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
@@ -81,6 +85,7 @@ module.exports = {
   assertArcChain,
   getAllowance,
   getReservation,
+  getCode,
   waitForReceipt,
   validateReservedEvent,
 }

@@ -1,4 +1,4 @@
-const router = require('express').Router()
+const routerModule = require('express').Router
 const { buildMarketProof, verifyMarketProof } = require('../../packages/market-proof')
 const { DEMO_OFFERS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS, ARC_TESTNET_NAME } = require('../../packages/shared')
 const { validateAuthorization, assertValid, unknownAuthorizationFields } = require('../../packages/shared/validation')
@@ -7,17 +7,50 @@ const { mergeAuthorization } = require('../lib/scout-agent')
 const { resolveEffectiveMode } = require('../lib/mode')
 const { rateLimit } = require('../lib/rate-limit')
 
+const BODY_FIELDS = Object.freeze(['offerId', 'runId', 'idempotencyKey', 'mode', 'authorization'])
+const MAX_IDENTIFIER_LENGTH = 160
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function requestError(message, statusCode = 400) {
+  const error = new Error(message)
+  error.statusCode = statusCode
+  return error
+}
+
+function assertIdentifier(value, field) {
+  if (typeof value !== 'string' || value.trim() === '') throw requestError(`${field} must be a non-empty string`)
+  if (value.length > MAX_IDENTIFIER_LENGTH) throw requestError(`${field} exceeds ${MAX_IDENTIFIER_LENGTH} characters`)
+  return value
+}
+
+function validateProofRequestBody(body = {}) {
+  if (!isPlainObject(body)) throw requestError('proof request body must be a JSON object')
+  const extras = Object.keys(body).filter((key) => !BODY_FIELDS.includes(key))
+  if (extras.length > 0) throw requestError(`unsupported proof request fields: ${extras.join(', ')}`)
+  if (body.mode !== 'live') throw requestError('mode: "live" is required for paid MarketProof generation')
+  const mode = resolveEffectiveMode(body.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
+  if (mode !== 'live') throw requestError('mode: "live" is required for paid MarketProof generation')
+  const offerId = assertIdentifier(body.offerId, 'offerId')
+  const runId = assertIdentifier(body.runId, 'runId')
+  const idempotencyKey = assertIdentifier(body.idempotencyKey, 'idempotencyKey')
+  const offer = DEMO_OFFERS.find((item) => item.id === offerId)
+  if (!offer) throw requestError('known offerId is required')
+  if (!isPlainObject(body.authorization)) throw requestError('authorization must be a JSON object')
+  const unknownAuth = unknownAuthorizationFields(body.authorization)
+  if (unknownAuth.length > 0) throw requestError(`unsupported authorization fields: ${unknownAuth.join(', ')}`)
+  const authorization = mergeAuthorization(body.authorization)
+  assertValid('authorization', validateAuthorization(authorization))
+  return { mode, offer, authorization, runId, idempotencyKey }
+}
+
 function strictProofRequest(req, _res, next) {
   try {
-    if (req.body?.mode !== 'live') throw new Error('mode: "live" is required for paid MarketProof generation')
-    req.effectiveMode = resolveEffectiveMode(req.body.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
-    if (req.body.signal || req.body.valuation || req.body.trades) throw new Error('client-submitted signal/valuation/trades are not accepted')
-    const unknownAuth = unknownAuthorizationFields(req.body.authorization || {})
-    if (unknownAuth.length > 0) throw new Error(`unsupported authorization fields: ${unknownAuth.join(', ')}`)
-    const allowed = ['offerId', 'runId', 'idempotencyKey', 'mode', 'authorization']
-    const extras = Object.keys(req.body || {}).filter((key) => !allowed.includes(key))
-    if (extras.length > 0) throw new Error(`unsupported proof request fields: ${extras.join(', ')}`)
-    if (!req.body.offerId || !req.body.runId || !req.body.idempotencyKey) throw new Error('offerId, runId, and idempotencyKey are required')
+    if (req.body?.signal || req.body?.valuation || req.body?.trades) throw requestError('client-submitted signal/valuation/trades are not accepted')
+    req.validatedProofRequest = validateProofRequestBody(req.body)
+    req.effectiveMode = req.validatedProofRequest.mode
     next()
   } catch (error) {
     error.statusCode = error.statusCode || 400
@@ -33,9 +66,7 @@ function createGatewayMiddleware() {
   const missing = missingSellerEnv()
   if (missing.length > 0) {
     return (_req, _res, next) => {
-      const error = new Error(`MarketProof x402 seller config missing: ${missing.join(', ')}`)
-      error.statusCode = 503
-      next(error)
+      next(requestError(`MarketProof x402 seller config missing: ${missing.join(', ')}`, 503))
     }
   }
   let createGatewayMiddlewareFn
@@ -43,9 +74,7 @@ function createGatewayMiddleware() {
     ;({ createGatewayMiddleware: createGatewayMiddlewareFn } = require('@circle-fin/x402-batching/server'))
   } catch (error) {
     return (_req, _res, next) => {
-      const err = new Error(`@circle-fin/x402-batching seller middleware unavailable: ${error.message}`)
-      err.statusCode = 503
-      next(err)
+      next(requestError(`@circle-fin/x402-batching seller middleware unavailable: ${error.message}`, 503))
     }
   }
   const gateway = createGatewayMiddlewareFn({
@@ -59,9 +88,6 @@ function createGatewayMiddleware() {
 function paidRequestToPayment(req, { offer, runId, idempotencyKey }) {
   const payment = req.payment || {}
   const amountMinor = payment.amount !== undefined ? BigInt(payment.amount) : 0n
-  const providerNetwork = payment.network || null
-  const providerChainId = providerNetwork === `eip155:${ARC_TESTNET_CHAIN_ID}` ? ARC_TESTNET_CHAIN_ID : null
-
   return {
     paymentKind: 'MarketProofPayment',
     runId,
@@ -73,8 +99,8 @@ function paidRequestToPayment(req, { offer, runId, idempotencyKey }) {
     payeeService: 'circle-gateway-x402',
     payeeAddress: process.env.MARKET_PROOF_SELLER_ADDRESS,
     network: ARC_TESTNET_NAME,
-    providerNetwork,
-    chainId: providerChainId,
+    providerNetwork: payment.network || null,
+    chainId: payment.network === `eip155:${ARC_TESTNET_CHAIN_ID}` ? ARC_TESTNET_CHAIN_ID : null,
     asset: 'USDC',
     usdcAddress: ARC_TESTNET_USDC_ADDRESS,
     amountUsdc: Number(amountMinor) / 1_000_000,
@@ -90,79 +116,12 @@ function paidRequestToPayment(req, { offer, runId, idempotencyKey }) {
   }
 }
 
-router.get('/quote', (_req, res) => {
-  res.json({
-    service: 'MarketProof',
-    network: ARC_TESTNET_NAME,
-    chainId: ARC_TESTNET_CHAIN_ID,
-    asset: 'USDC',
-    usdcAddress: ARC_TESTNET_USDC_ADDRESS,
-    priceUsdc: Number(process.env.MARKET_PROOF_PRICE_USDC || 0.001),
-    paymentRail: 'Circle Gateway nanopayments / x402 seller middleware',
-    sellerAddressConfigured: Boolean(process.env.MARKET_PROOF_SELLER_ADDRESS),
-    note: 'Proof generation never signs client-submitted signal/valuation/trades.',
-  })
-})
-
-router.post('/prove', rateLimit({ windowMs: 60_000, max: 30 }), strictProofRequest, (req, res, next) => {
-  if (req.effectiveMode !== 'live') {
-    const error = new Error('/api/market-proof/prove is the live x402 seller endpoint; replay runs use internal simulation')
-    error.statusCode = 400
-    next(error)
-    return
-  }
-  createGatewayMiddleware()(req, res, next)
-}, async (req, res, next) => {
-  try {
-    const payload = await buildSellerProofResponse({ body: req.body, payment: paidRequestToPayment(req, { offer: DEMO_OFFERS.find((item) => item.id === req.body.offerId) || {}, runId: req.body.runId, idempotencyKey: req.body.idempotencyKey }) })
-    res.json(payload)
-  } catch (error) {
-    if (error.statusCode) {
-      res.status(error.statusCode).json({ error: error.message, verification: error.verification || undefined })
-      return
-    }
-    next(error)
-  }
-})
-
-router.use((error, _req, res, _next) => {
-  res.status(error.statusCode || 400).json({ error: 'MarketProof failed', message: error.message })
-})
-
-async function buildSellerProofResponse({ body, payment }) {
-  const mode = resolveEffectiveMode(body.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
-  if (mode !== 'live') {
-    const error = new Error('mode: "live" is required for paid MarketProof generation')
-    error.statusCode = 400
-    throw error
-  }
-  const offer = DEMO_OFFERS.find((item) => item.id === body.offerId)
-  if (!offer) {
-    const error = new Error('known offerId is required')
-    error.statusCode = 400
-    throw error
-  }
-  const unknownAuth = unknownAuthorizationFields(body.authorization || {})
-  if (unknownAuth.length > 0) {
-    const error = new Error(`unsupported authorization fields: ${unknownAuth.join(', ')}`)
-    error.statusCode = 400
-    throw error
-  }
-  const authorization = mergeAuthorization(body.authorization || {})
-  assertValid('authorization', validateAuthorization(authorization))
-  const runId = body.runId
-  const idempotencyKey = body.idempotencyKey
+async function buildSellerProofResponse({ request, body, payment }) {
+  const validated = request || validateProofRequestBody(body)
+  const { mode, offer, authorization, runId, idempotencyKey } = validated
   const proofSignal = await getCardSignal({ mode, card: offer.card, offer, authorization })
-  if (proofSignal.dataMode === 'REPLAY_FALLBACK') {
-    const error = new Error('Renaiss fallback blocks paid proof generation')
-    error.statusCode = 503
-    throw error
-  }
-  if (proofSignal.identity?.certFound !== true || proofSignal.identity?.certMatchesOffer !== true) {
-    const error = new Error('cert/card/offer identity mismatch')
-    error.statusCode = 422
-    throw error
-  }
+  if (proofSignal.dataMode === 'REPLAY_FALLBACK') throw requestError('Renaiss fallback blocks paid proof generation', 503)
+  if (proofSignal.identity?.certFound !== true || proofSignal.identity?.certMatchesOffer !== true) throw requestError('cert/card/offer identity mismatch', 422)
   const proof = buildMarketProof({ signal: proofSignal, offer, authorization, payment, runId, idempotencyKey })
   const verification = await verifyMarketProof({
     proof,
@@ -176,13 +135,56 @@ async function buildSellerProofResponse({ body, payment }) {
     expectedPayeeAddress: process.env.MARKET_PROOF_SELLER_ADDRESS,
   })
   if (!verification.ok) {
-    const error = new Error('MarketProof self-verification failed')
-    error.statusCode = 422
+    const error = requestError('MarketProof self-verification failed', 422)
     error.verification = verification
     throw error
   }
   return { payment, proof: verification.proof, verification, authorization }
 }
 
-module.exports = router
-module.exports._internals = { strictProofRequest, paidRequestToPayment, buildSellerProofResponse, createGatewayMiddleware }
+function createProofRouter({ gatewayMiddlewareFactory = createGatewayMiddleware } = {}) {
+  const router = routerModule()
+  router.get('/quote', (_req, res) => {
+    res.json({
+      service: 'MarketProof',
+      network: ARC_TESTNET_NAME,
+      chainId: ARC_TESTNET_CHAIN_ID,
+      asset: 'USDC',
+      usdcAddress: ARC_TESTNET_USDC_ADDRESS,
+      priceUsdc: Number(process.env.MARKET_PROOF_PRICE_USDC || 0.001),
+      paymentRail: 'Circle Gateway nanopayments / x402 seller middleware',
+      sellerAddressConfigured: Boolean(process.env.MARKET_PROOF_SELLER_ADDRESS),
+      note: 'Proof generation never signs client-submitted signal/valuation/trades.',
+    })
+  })
+
+  router.post('/prove', rateLimit({ windowMs: 60_000, max: 30 }), strictProofRequest, (req, res, next) => {
+    gatewayMiddlewareFactory()(req, res, next)
+  }, async (req, res, next) => {
+    try {
+      const validated = req.validatedProofRequest
+      const payload = await buildSellerProofResponse({
+        request: validated,
+        payment: paidRequestToPayment(req, validated),
+      })
+      res.json(payload)
+    } catch (error) {
+      if (error.statusCode) {
+        res.status(error.statusCode).json({ error: error.message, verification: error.verification || undefined })
+        return
+      }
+      next(error)
+    }
+  })
+
+  router.use((error, _req, res, _next) => {
+    res.status(error.statusCode || 400).json({ error: 'MarketProof failed', message: error.message })
+  })
+  return router
+}
+
+const defaultRouter = createProofRouter()
+defaultRouter.createProofRouter = createProofRouter
+defaultRouter._internals = { strictProofRequest, paidRequestToPayment, buildSellerProofResponse, createGatewayMiddleware, validateProofRequestBody }
+
+module.exports = defaultRouter
