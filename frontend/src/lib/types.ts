@@ -3,6 +3,12 @@ export type CheckStatus = 'pass' | 'warn' | 'fail'
 
 export interface Authorization {
   targetCard: string
+  targetItemId?: string
+  targetRenaissItemId?: string
+  targetHref?: string
+  certNumber?: string
+  company?: string
+  gradeLabel?: string
   maxOfferUsd: number
   maxPriceVsMedianPct: number
   minConfidence: string
@@ -25,6 +31,11 @@ export interface Offer {
   sellerAddress: string
   expiresAt: string
   targetCard: string
+  targetItemId?: string
+  targetRenaissItemId?: string
+  targetHref?: string
+  company?: string
+  gradeLabel?: string
   certNumber: string
   imageConfidence: string
   certFound: boolean
@@ -54,7 +65,9 @@ export interface Signal {
     certNumber: string | null
     certFound: boolean
     certMatchesOffer: boolean
-    certLookup: { cert: string | null; found: boolean; matchesOffer: boolean; name: string | null; gradeLabel: string | null; observedAt: string | null }
+    certLookup: { cert: string | null; certNumber?: string | null; found: boolean; certMatchesOffer?: boolean; itemId?: string | null; href?: string | null; name: string | null; gradeLabel: string | null; company?: string | null; observedAt: string | null }
+    targetItemId?: string | null
+    targetHref?: string | null
     forcedLowConfidence?: boolean
   }
   valuation: {
@@ -79,7 +92,9 @@ export interface Signal {
   trades: {
     completedCount: number
     listingCount: number
+    sampleMode?: 'transaction' | 'aggregate-only'
     recent: Array<{ kind: string; source: string; priceUsd: number | null; observedAt: string | null }>
+    aggregateRows?: Array<{ kind: string; source: string; priceUsd: number | null; observedAt: string | null }>
   }
   trend: Array<{ method: string; label: string; points: Array<{ t: string; usd: number }> }>
   marketBackdrop: Array<{ game: string; label: string; value: number; deltas: Record<string, number>; updatedAt: string }>
@@ -129,7 +144,9 @@ export interface MarketProof {
   listingRowsExcluded: number
   expiresAt?: string
   cardIdentity?: Record<string, unknown>
-  sourceTimestamps?: Array<{ source: string; observedAt: string }>
+  verified?: boolean
+  tradeSampleMode?: 'transaction' | 'aggregate-only'
+  sourceTimestamps?: Array<{ source: string; observedAt: string; mode?: string }>
   paymentReceipt?: Record<string, unknown> | null
   outliers: string[]
 }
@@ -164,6 +181,7 @@ export interface ScoutRunResult {
   runId: string
   status: string
   mode: string
+  executionStatus?: string
   authorization: Authorization
   offer: Offer
   signal: Signal

@@ -11,10 +11,16 @@ import { getDemoConfig, runScout } from './lib/api'
 import type { Authorization, DemoConfig, Offer, ScoutRunResult } from './lib/types'
 
 const FALLBACK_AUTHORIZATION: Authorization = {
-  targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
-  maxOfferUsd: 360,
-  maxPriceVsMedianPct: 90,
-  minConfidence: 'high',
+  targetCard: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
+  targetItemId: '6e7fdc9a-8054-4034-bc02-8fb64209c688',
+  targetRenaissItemId: '81d9d2d5-9adf-4f16-9bae-7fafabcce4ae',
+  targetHref: '/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
+  certNumber: '80396943',
+  company: 'PSA',
+  gradeLabel: 'PSA 10',
+  maxOfferUsd: 100,
+  maxPriceVsMedianPct: 95,
+  minConfidence: 'medium',
   minSourceCount: 2,
   minObservationCount: 5,
   maxLastSaleAgeDays: 14,
@@ -28,17 +34,22 @@ const FALLBACK_AUTHORIZATION: Authorization = {
 
 const FALLBACK_OFFERS: Offer[] = [
   {
-    id: 'offer-charizard-350',
-    title: 'Seller A · clean discount',
-    targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
-    certNumber: 'DEMO-CERT-CHARIZARD-PSA10',
-    askUsd: 350,
+    id: 'offer-reshizard-95',
+    title: 'Seller A · verified discount',
+    targetCard: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
+    targetItemId: '6e7fdc9a-8054-4034-bc02-8fb64209c688',
+    targetRenaissItemId: '81d9d2d5-9adf-4f16-9bae-7fafabcce4ae',
+    targetHref: '/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
+    certNumber: '80396943',
+    company: 'PSA',
+    gradeLabel: 'PSA 10',
+    askUsd: 95,
     depositUsdc: 0.1,
     sellerAddress: '0x5000000000000000000000000000000000000001',
     expiresAt: '2030-08-09T10:00:00.000Z',
     imageConfidence: 'high',
     certFound: true,
-    narrative: '报价约低于 7 日中位价 11%，用于展示自动付费深查 + Arc 订金锁定。',
+    narrative: '真实 PSA cert 80396943 对应 Reshiram & Charizard-GX PSA 10，报价低于授权阈值。',
   },
 ]
 
@@ -128,7 +139,7 @@ export default function App() {
               >
                 {loading ? 'Agent running…' : 'Run SlabScout Agent'}
               </button>
-              <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；失败自动回放固定快照，保证演示稳定。</p>
+              <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；非证书类故障会进入 REPLAY_FALLBACK，但真实支付/锁仓会被禁止。</p>
             </div>
           </div>
         </header>
@@ -137,11 +148,12 @@ export default function App() {
           <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-600">{error}</div>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <MetricCard label="Proof fee" value="0.001 USDC" helper="Circle nanopayment demo adapter" />
           <MetricCard label="Demo deposit" value={`${selectedOffer?.depositUsdc || 0.1} USDC`} helper="Arc escrow reserve amount" />
           <MetricCard label="Offer ask" value={`$${selectedOffer?.askUsd || 0}`} helper={selectedOffer?.title || 'Seller offer'} />
-          <MetricCard label="Policy" value="V1.0" helper="pure deterministic checks" />
+          <MetricCard label="Policy" value="V1.1" helper={`Decision: ${finalAction}`} />
+          <MetricCard label="Execution" value={result?.executionStatus || 'not-started'} helper="separate from policy decision" />
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
@@ -177,7 +189,7 @@ export default function App() {
         )}
 
         <footer className="rounded-[24px] border border-border-strong bg-bg-base p-5 text-sm leading-7 text-fg-subtle">
-          <strong className="text-fg-base">Demo disclosure:</strong> Renaiss API key/secret 仅放在 backend env；Arc 当前按 Testnet 展示，Circle/Arc 默认使用 deterministic mock adapter，接入真实 Agent Wallet 后可替换为 `circle services pay` 与 `circle wallet execute`。
+          <strong className="text-fg-base">Demo disclosure:</strong> Renaiss API key/secret 仅放在 backend env；Arc 当前按 Testnet 展示，Circle/Arc 默认使用 deterministic mock/replay adapter；mock/replay 不会展示为真实 paid、reserved、tx hash 或 explorer evidence。
           {signal?.card.pageUrl ? <a className="ml-2 font-bold text-brand-100" href={signal.card.pageUrl} target="_blank" rel="noreferrer">Open Renaiss card page</a> : null}
         </footer>
       </div>

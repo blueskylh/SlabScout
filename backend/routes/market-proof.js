@@ -16,7 +16,8 @@ router.get('/quote', (_req, res) => {
 router.post('/prove', async (req, res, next) => {
   try {
     const authorization = { ...DEFAULT_AUTHORIZATION, ...(req.body.authorization || {}) }
-    const offer = req.body.offer || DEMO_OFFERS[0]
+    const offer = req.body.offer || (req.body.offerId ? DEMO_OFFERS.find((item) => item.id === req.body.offerId) : null)
+    if (!offer) throw new Error('offer or known offerId is required')
     const signal = req.body.signal
     if (!signal) throw new Error('signal is required')
     const payment = await payForMarketProof({ runId: req.body.runId || 'adhoc', offer, authorization, dataMode: 'live' })

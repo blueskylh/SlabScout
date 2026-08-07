@@ -32,18 +32,22 @@ contracts/               ReservationEscrow.sol and lightweight fixture
 
 ## MVP implementation status
 
-P0-A is implemented in this repository:
+P0-A.1 correctness hardening is implemented in this repository:
 
 - Arc Testnet chain ID is `5042002`.
 - Arc Testnet USDC is `0x3600000000000000000000000000000000000000`.
-- Renaiss trades use `scope=grade`, normalize `observedAt`, and expose transaction rows separately from listings.
-- Offers now require target card, certificate number, expiry, amount, seller address, and enum validation.
-- Replay includes a cert lookup fixture and policy requires cert lookup to match the target card.
-- Live mode refuses the built-in MarketProof signing secret.
-- Node tests with real assertions cover constants, validation, cert lookup, policy rejection, live secret guard, and replay branches.
+- Demo identity now uses a real PSA cert: `80396943` for Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10.
+- Renaiss live mode calls `/v1/graded/{cert}` first and treats returned `itemId` + `card.href` as identity truth.
+- Authorization, offer, cert lookup, and card detail must match structurally on card identity, href, grading company, grade, and cert.
+- Invalid/unauthorized/not-found cert lookup is a hard `REJECT`; it does not silently switch to replay.
+- Renaiss trades use `scope=grade`, normalize `observedAt`, and expose transaction rows separately from listings; if source rows are aggregate-only, the proof labels them as `aggregate-only`.
+- Offers now require target item/href, certificate number, expiry, amount, seller address, and enum validation. Unknown `offerId` is an error, not Seller A fallback.
+- MarketProof can be verified by reconstructing the canonical payload, checking a full 32-byte proof hash, HMAC signature, offer/cert/price/payment bindings, expiry, and source TTL.
+- Runtime config validates Arc Testnet chain ID, USDC address, execution-mode enums, proof hash, and non-zero live EVM addresses.
+- Replay has priority over live Circle/Arc env and never calls a wallet; live Renaiss failure becomes `REPLAY_FALLBACK` and prohibits real payment.
 - Mock adapters no longer return fake live tx hashes; replay receipts are labelled `replay-*`, not live payment / explorer evidence.
 
-P0-B/P0-C/P0-D still require Circle Agent Wallet login, test USDC funding, x402/Nanopayment wiring, Arc deployment, and persistent budget/idempotency storage before the project can be called a live-submittable MVP.
+P0-B/P0-C/P0-D still require Circle Agent Wallet login, test USDC funding, x402/Nanopayment wiring, Arc deployment, and persistent budget/idempotency storage before the project can be called live-capable. P0-A.1 intentionally does not integrate real payment.
 
 ## Environment
 
@@ -105,11 +109,12 @@ The frontend build script requires `BACKEND_PORT` and `BASE_PATH` to be defined,
 
 ## Demo paths
 
-- Seller A (`offer-charizard-350`) demonstrates the reserve path: Renaiss signal
-  passes hard gates, `refreshing=true` / proof-required triggers MarketProof, the
-  post-proof policy becomes `RESERVE`, then Arc escrow locks 0.10 USDC.
-- Seller B (`offer-charizard-430`) is rejected because the ask is above the
-  authorized 90% of 7-day median price.
+- Seller A (`offer-reshizard-95`) demonstrates the reserve path: Renaiss signal
+  passes hard gates, proof-required triggers MarketProof, the post-proof policy
+  becomes `RESERVE`, then the replay escrow branch confirms a labelled 0.10 USDC
+  reservation fixture.
+- Seller B (`offer-reshizard-120`) is rejected because the ask is above the
+  authorization limits.
 - Seller C (`offer-low-confidence`) is rejected because identity/data quality is
   below the authorization threshold.
 
@@ -124,16 +129,16 @@ The frontend build script requires `BACKEND_PORT` and `BASE_PATH` to be defined,
 
 ## Policy V1 hard rules
 
-- Image confidence must be `high`, or certificate lookup must be found.
-- Renaiss confidence must meet the authorization minimum (`high` by default;
-  `prime` passes).
+- Certificate lookup must be found and structurally match the authorized target item/href, grading company, grade, and offer cert.
+- Renaiss confidence must meet the authorization minimum (`medium` by default;
+  `high` / `prime` pass).
 - `sourceCount >= 2` and `observationCount >= 5`.
 - Last completed sale must be within 14 days.
-- Offer ask must be no higher than the lesser of user max price and 90% of the
-  7-day median.
+- Offer ask must be no higher than the lesser of user max price and the
+  configured percentage of the 7-day median.
 - Mean and VWAP must be within 15% of the median.
 - MarketProof fee, deposit, and total daily spend must remain inside budget.
-- `refreshing=true` never goes straight to escrow; it first triggers MarketProof.
+- If `requireMarketProof=true`, a verified MarketProof is required before escrow; if it is disabled, the 0.001 USDC intel fee is not counted in budget.
 
 ## Security notes
 
@@ -141,9 +146,8 @@ The frontend build script requires `BACKEND_PORT` and `BASE_PATH` to be defined,
 - `.env*`, private keys, logs, and build outputs are gitignored.
 - Recent trade rows with `kind=listing` are explicitly excluded from MarketProof.
 - Arc Testnet USDC is treated as a 6-decimal ERC-20 in the Solidity contract.
-- Circle/Arc adapters default to deterministic mock receipts so the hackathon UI
-  is stable. Wire real `circle services pay` and `circle wallet execute` only on
-  the server after wallet envs are configured.
+- Circle/Arc adapters default to deterministic mock/replay receipts so the hackathon UI
+  is stable and never fabricates a live transaction hash. The Circle CLI command shape is `circle services pay <url> --address <address> --chain <chain> --max-amount <usdc>`; wire real `circle services pay` and wallet execution only on the server after wallet envs are configured.
 
 ## Manual review loop record
 

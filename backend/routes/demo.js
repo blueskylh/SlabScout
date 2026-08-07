@@ -4,7 +4,7 @@ const { getCardSignal } = require('../../packages/renaiss-client')
 
 router.get('/', async (_req, res, next) => {
   try {
-    const signal = await getCardSignal({ mode: 'replay', card: DEMO_CARD, offer: DEMO_OFFERS[0] })
+    const signal = await getCardSignal({ mode: 'replay', card: DEMO_CARD, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION })
     res.json({
       app: 'SlabScout',
       defaultMode: process.env.SLABSCOUT_DEFAULT_MODE || 'replay',
@@ -13,7 +13,8 @@ router.get('/', async (_req, res, next) => {
       replaySignal: signal,
       disclosures: [
         'Renaiss credentials are backend-only environment variables.',
-        'Arc and Circle adapters default to deterministic mock mode for hackathon demos.',
+        'Arc and Circle adapters default to deterministic mock/replay mode for hackathon demos.',
+        'Mock/replay status is never displayed as a real paid, reserved, tx hash, or explorer receipt.',
         'Replay mode uses a fixed Renaiss-shaped snapshot so the 3-minute demo remains stable.',
       ],
     })

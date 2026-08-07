@@ -11,13 +11,23 @@ function money(value?: number | null) {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function paymentTone(payment: PaymentReceipt | null) {
+  if (payment?.status === 'live-payment-confirmed') return 'pass'
+  return payment ? 'warn' : 'warn'
+}
+
+function escrowTone(escrow: EscrowReceipt | null) {
+  if (escrow?.txHash && escrow.chainConfirmed) return 'pass'
+  return escrow ? 'warn' : 'warn'
+}
+
 export function ProofAndEscrow({ payment, proof, escrow }: { payment: PaymentReceipt | null; proof: MarketProof | null; escrow: EscrowReceipt | null }) {
   return (
     <section className="grid gap-4 lg:grid-cols-3">
       <article className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-black text-fg-base">Nanopayment</h2>
-          <StatusPill tone={payment?.confirmed ? 'pass' : 'warn'}>{payment ? payment.status : 'not paid'}</StatusPill>
+          <StatusPill tone={paymentTone(payment)}>{payment ? payment.status : 'not paid'}</StatusPill>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <Row label="Amount" value={payment ? `${payment.amountUsdc} ${payment.asset}` : '—'} />
@@ -29,7 +39,7 @@ export function ProofAndEscrow({ payment, proof, escrow }: { payment: PaymentRec
       <article className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-black text-fg-base">MarketProof</h2>
-          <StatusPill tone={proof ? 'pass' : 'warn'}>{proof ? 'hashed' : 'none'}</StatusPill>
+          <StatusPill tone={proof?.verified ? 'pass' : 'warn'}>{proof?.verified ? 'verified' : proof ? 'hashed' : 'none'}</StatusPill>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <Row label="Proof hash" value={shortHash(proof?.proofHash)} mono />
@@ -41,7 +51,7 @@ export function ProofAndEscrow({ payment, proof, escrow }: { payment: PaymentRec
       <article className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-black text-fg-base">Arc Escrow</h2>
-          <StatusPill tone={escrow?.chainConfirmed ? 'pass' : 'warn'}>{escrow ? escrow.status : 'not reserved'}</StatusPill>
+          <StatusPill tone={escrowTone(escrow)}>{escrow ? escrow.status : 'not reserved'}</StatusPill>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <Row label="Deposit" value={escrow ? `${escrow.amountUsdc} USDC` : '—'} />

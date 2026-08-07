@@ -1,10 +1,23 @@
-const { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS, DEFAULT_MARKET_PROOF_PRICE_USDC, DEFAULT_ESCROW_DEPOSIT_USDC } = require('./constants')
+const {
+  ARC_TESTNET_CHAIN_ID,
+  ARC_TESTNET_USDC_ADDRESS,
+  ZERO_ADDRESS,
+  DEFAULT_MARKET_PROOF_PRICE_USDC,
+  DEFAULT_ESCROW_DEPOSIT_USDC,
+  DEMO_TARGET,
+} = require('./constants')
 
 const DEFAULT_AUTHORIZATION = Object.freeze({
-  targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
-  maxOfferUsd: 360,
-  maxPriceVsMedianPct: 90,
-  minConfidence: 'high',
+  targetCard: DEMO_TARGET.targetCard,
+  targetItemId: DEMO_TARGET.targetItemId,
+  targetRenaissItemId: DEMO_TARGET.targetRenaissItemId,
+  targetHref: DEMO_TARGET.targetHref,
+  certNumber: DEMO_TARGET.certNumber,
+  company: DEMO_TARGET.company,
+  gradeLabel: DEMO_TARGET.gradeLabel,
+  maxOfferUsd: 100,
+  maxPriceVsMedianPct: 95,
+  minConfidence: 'medium',
   minSourceCount: 2,
   minObservationCount: 5,
   maxLastSaleAgeDays: 14,
@@ -18,55 +31,60 @@ const DEFAULT_AUTHORIZATION = Object.freeze({
 
 const DEMO_CARD = Object.freeze({
   game: 'pokemon',
-  set: 'pokemon-japanese-cll-trading-card-game-classic-charizard-ho-oh-ex-deck',
-  card: '003-charizard-psa-10-japanese-2800094f',
-  href: '/card/pokemon/pokemon-japanese-cll-trading-card-game-classic-charizard-ho-oh-ex-deck/003-charizard-psa-10-japanese-2800094f',
+  set: 'tag-all-stars',
+  card: '16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
+  href: DEMO_TARGET.targetHref,
 })
 
+function makeDemoOffer(id, overrides) {
+  return Object.freeze({
+    id,
+    title: overrides.title,
+    card: DEMO_CARD,
+    targetCard: DEMO_TARGET.targetCard,
+    targetItemId: DEMO_TARGET.targetItemId,
+    targetRenaissItemId: DEMO_TARGET.targetRenaissItemId,
+    targetHref: DEMO_TARGET.targetHref,
+    certNumber: DEMO_TARGET.certNumber,
+    company: DEMO_TARGET.company,
+    gradeLabel: DEMO_TARGET.gradeLabel,
+    askUsd: overrides.askUsd,
+    depositUsdc: DEFAULT_ESCROW_DEPOSIT_USDC,
+    sellerAddress: overrides.sellerAddress,
+    expiresAt: '2030-08-09T10:00:00.000Z',
+    imageConfidence: overrides.imageConfidence,
+    certFound: overrides.certFound,
+    forceLowConfidence: overrides.forceLowConfidence || false,
+    narrative: overrides.narrative,
+  })
+}
+
 const DEMO_OFFERS = Object.freeze([
-  {
-    id: 'offer-charizard-350',
-    title: 'Seller A · clean discount',
-    card: DEMO_CARD,
-    targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
-    certNumber: 'DEMO-CERT-CHARIZARD-PSA10',
-    askUsd: 350,
-    depositUsdc: DEFAULT_ESCROW_DEPOSIT_USDC,
+  makeDemoOffer('offer-reshizard-95', {
+    title: 'Seller A · verified discount',
+    askUsd: 95,
     sellerAddress: '0x5000000000000000000000000000000000000001',
-    expiresAt: '2030-08-09T10:00:00.000Z',
     imageConfidence: 'high',
     certFound: true,
-    narrative: '报价约低于 7 日中位价 11%，用于展示自动付费深查 + Arc 订金锁定。',
-  },
-  {
-    id: 'offer-charizard-430',
+    narrative: '真实 PSA cert 80396943 对应 Reshiram & Charizard-GX PSA 10，报价低于授权阈值。',
+  }),
+  makeDemoOffer('offer-reshizard-120', {
     title: 'Seller B · overpriced branch',
-    card: DEMO_CARD,
-    targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
-    certNumber: 'DEMO-CERT-CHARIZARD-PSA10',
-    askUsd: 430,
-    depositUsdc: DEFAULT_ESCROW_DEPOSIT_USDC,
+    askUsd: 120,
     sellerAddress: '0x5000000000000000000000000000000000000002',
-    expiresAt: '2030-08-09T10:00:00.000Z',
     imageConfidence: 'high',
     certFound: true,
-    narrative: '报价高于 7 日中位价 90% 的授权阈值，必须拒绝且不发生支付。',
-  },
-  {
-    id: 'offer-low-confidence',
+    narrative: '报价高于授权价格上限，必须拒绝且不发生支付。',
+  }),
+  makeDemoOffer('offer-low-confidence', {
     title: 'Seller C · weak data branch',
-    card: DEMO_CARD,
-    targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
-    certNumber: 'DEMO-CERT-CHARIZARD-PSA10',
-    askUsd: 340,
-    depositUsdc: DEFAULT_ESCROW_DEPOSIT_USDC,
+    askUsd: 90,
     sellerAddress: '0x5000000000000000000000000000000000000003',
-    expiresAt: '2030-08-09T10:00:00.000Z',
     imageConfidence: 'medium',
-    certFound: false,
+    certFound: true,
     forceLowConfidence: true,
-    narrative: '身份/数据质量不足，即使价格便宜也不能自动锁订金。',
-  },
+    narrative: '数据质量被压低，即使价格便宜也不能自动锁订金。',
+  }),
 ])
 
 const CONFIDENCE_RANK = Object.freeze({
@@ -121,6 +139,8 @@ module.exports = {
   stableJson,
   ARC_TESTNET_CHAIN_ID,
   ARC_TESTNET_USDC_ADDRESS,
+  ZERO_ADDRESS,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
   DEFAULT_ESCROW_DEPOSIT_USDC,
+  DEMO_TARGET,
 }

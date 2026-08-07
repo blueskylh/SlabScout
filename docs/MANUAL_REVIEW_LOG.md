@@ -43,3 +43,14 @@ After the MVP specification review, P0-A was implemented and source-reviewed:
 - Node tests with assertions were added under `tests/p0a.test.js`.
 
 Known boundary: Circle/Arc live execution is intentionally adapter-gated. The default replay path uses labelled replay confirmations until server-side Circle Agent Wallet credentials, real payment receipt verification, deployed escrow address, and Arc Testnet transaction confirmation are configured.
+
+## P0-A.1 correctness pass
+
+This pass was limited to the requested correctness fixes and intentionally did not integrate real Circle payment or live Arc escrow execution.
+
+1. **Structural identity pass** — replaced the fake demo cert with real PSA cert `80396943`, added target item/href fields, and re-read authorization/offer/cert/detail matching so mismatched cards reject before payment.
+2. **Renaiss semantics pass** — re-read live client flow to ensure `/v1/graded/{cert}` is requested first, terminal cert errors (`400/401/404`) become hard rejects instead of replay fallback, source timestamps are split, and trade samples are either transaction-backed or explicitly `aggregate-only`.
+3. **Proof verification pass** — re-read MarketProof payload construction and added canonical-payload hash reconstruction, full 32-byte hash validation, timing-safe HMAC comparison, and offer/cert/price/payment/TTL binding checks.
+4. **Policy/budget pass** — re-read hard gates and budget math; `requireMarketProof=false` no longer budgets the 0.001 USDC intel fee, and `finalizeWithProof` only accepts verified proofs.
+5. **State-machine pass** — re-read orchestration and adapters so replay takes priority over live Circle/Arc env, `REPLAY_FALLBACK` blocks real payment, unknown offers do not fall back to Seller A, and replay execution status is not displayed as real success.
+6. **Config/docs/CI pass** — re-read runtime validation, env examples, README copy, Circle CLI syntax, and added GitHub Actions coverage for test/lint/type-check/build.

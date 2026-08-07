@@ -6,6 +6,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { execSync } = require('node:child_process')
+const { validateRuntimeConfig } = require('../../packages/shared/validation')
 
 const envPath = path.join(process.cwd(), '.env')
 if (fs.existsSync(envPath)) {
@@ -27,6 +28,12 @@ const missing = required.filter((key) => !process.env[key])
 if (missing.length > 0) {
   console.error(`\n❌ Missing required env vars: ${missing.join(', ')}`)
   console.error('   Copy backend/.env.example to backend/.env or set them in the deployment environment.\n')
+  process.exit(1)
+}
+
+const runtime = validateRuntimeConfig(process.env)
+if (!runtime.ok) {
+  console.error(`\n❌ Invalid runtime config: ${runtime.errors.join('; ')}\n`)
   process.exit(1)
 }
 
