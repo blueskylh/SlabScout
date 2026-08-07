@@ -16,7 +16,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   const text = await response.text()
-  const body = text ? JSON.parse(text) : null
+  let body: any = null
+  try {
+    body = text ? JSON.parse(text) : null
+  } catch {
+    body = { message: text }
+  }
   if (!response.ok) {
     throw new Error(body?.message || body?.error || `Request failed: ${response.status}`)
   }

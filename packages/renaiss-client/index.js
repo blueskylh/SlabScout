@@ -214,7 +214,7 @@ async function getCardSignal({ mode = process.env.SLABSCOUT_DEFAULT_MODE || 'rep
   } catch (error) {
     const fallback = await getReplaySignal({ offer })
     fallback.dataMode = 'replay-fallback'
-    fallback.liveError = error.message
+    fallback.liveError = error instanceof Error ? error.message : String(error)
     return fallback
   }
 }

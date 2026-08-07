@@ -15,6 +15,7 @@ export function Timeline({ items }: { items: TimelineItem[] }) {
                 <StatusPill tone={item.status}>{item.status}</StatusPill>
               </div>
               <p className="mt-1 text-sm leading-6 text-fg-subtle">{item.note}</p>
+              {item.receiptId ? <p className="mt-1 break-all font-mono text-xs text-fg-muted">receipt {item.receiptId}</p> : null}
               {item.txHash ? <p className="mt-1 break-all font-mono text-xs text-fg-muted">tx {item.txHash}</p> : null}
             </div>
           </div>

@@ -5,9 +5,19 @@ function deterministicHash(prefix, payload) {
   return `${prefix}${crypto.createHash('sha256').update(stableJson(payload)).digest('hex')}`
 }
 
+function positiveNumber(value, fallback = null) {
+  const parsed = Number(value)
+  if (Number.isFinite(parsed) && parsed > 0) return parsed
+  return fallback
+}
+
 async function payForMarketProof({ runId, offer, authorization }) {
-  const amountUsdc = Number(process.env.MARKET_PROOF_PRICE_USDC || authorization.intelFeeUsdc || 0.001)
-  if (amountUsdc > Number(authorization.maxIntelFeeUsdc)) {
+  const amountUsdc = positiveNumber(process.env.MARKET_PROOF_PRICE_USDC, positiveNumber(authorization.intelFeeUsdc, 0.001))
+  const maxIntelFeeUsdc = positiveNumber(authorization.maxIntelFeeUsdc)
+  if (!amountUsdc || !maxIntelFeeUsdc) {
+    throw new Error('Invalid MarketProof fee authorization')
+  }
+  if (amountUsdc > maxIntelFeeUsdc) {
     throw new Error('MarketProof fee exceeds authorization')
   }
 
@@ -40,8 +50,15 @@ async function payForMarketProof({ runId, offer, authorization }) {
 }
 
 async function reserveEscrow({ runId, offer, proof, authorization }) {
-  const amountUsdc = Number(offer.depositUsdc)
-  if (amountUsdc > Number(authorization.maxDepositUsdc)) {
+  const amountUsdc = positiveNumber(offer.depositUsdc)
+  const maxDepositUsdc = positiveNumber(authorization.maxDepositUsdc)
+  if (!amountUsdc || !maxDepositUsdc) {
+    throw new Error('Invalid deposit authorization')
+  }
+  if (!proof?.proofHash || !proof.proofHash.startsWith('0x')) {
+    throw new Error('Valid proof hash is required before escrow reservation')
+  }
+  if (amountUsdc > maxDepositUsdc) {
     throw new Error('Deposit exceeds authorization')
   }
 
@@ -52,7 +69,7 @@ async function reserveEscrow({ runId, offer, proof, authorization }) {
     seller: offer.sellerAddress || process.env.SELLER_WALLET_ADDRESS,
     buyer: process.env.AGENT_WALLET_ADDRESS || '0xA9E0000000000000000000000000000000000001',
     escrow: process.env.RESERVATION_ESCROW_ADDRESS || '0x0000000000000000000000000000000000000000',
-    chainId: Number(process.env.ARC_CHAIN_ID || 50420),
+    chainId: positiveNumber(process.env.ARC_CHAIN_ID, 50420),
     amountUsdc,
     proofHash: proof.proofHash,
     reservedAt: new Date().toISOString(),

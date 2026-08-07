@@ -6,6 +6,16 @@ function money(value?: number | null) {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function percent(value?: number | null) {
+  if (value === null || value === undefined) return '—'
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`
+}
+
+function days(value?: number | null) {
+  if (value === null || value === undefined) return '—'
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}d`
+}
+
 export function DecisionPanel({ decision, title }: { decision: Decision; title: string }) {
   return (
     <section className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
@@ -20,8 +30,8 @@ export function DecisionPanel({ decision, title }: { decision: Decision; title: 
       <div className="mt-5 grid gap-3 sm:grid-cols-4">
         <div className="decision-metric"><span>Ask</span><strong>{money(decision.metrics.askUsd)}</strong></div>
         <div className="decision-metric"><span>Allowed</span><strong>{money(decision.metrics.allowedAskUsd)}</strong></div>
-        <div className="decision-metric"><span>Discount</span><strong>{decision.metrics.discountToMedianPct ?? '—'}%</strong></div>
-        <div className="decision-metric"><span>Sale age</span><strong>{decision.metrics.saleAgeDays ?? '—'}d</strong></div>
+        <div className="decision-metric"><span>Discount</span><strong>{percent(decision.metrics.discountToMedianPct)}</strong></div>
+        <div className="decision-metric"><span>Sale age</span><strong>{days(decision.metrics.saleAgeDays)}</strong></div>
       </div>
 
       <div className="mt-5 overflow-hidden rounded-2xl border border-border-strong">

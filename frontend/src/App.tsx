@@ -58,7 +58,9 @@ export default function App() {
         setAuthorization(config.defaultAuthorization)
         setSelectedOfferId(config.offers[0]?.id || FALLBACK_OFFERS[0].id)
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      })
     return () => { cancelled = true }
   }, [])
 
@@ -89,7 +91,7 @@ export default function App() {
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
               <div className="mb-4 flex flex-wrap gap-2">
-                <StatusPill tone={finalAction}>{result ? finalAction : 'READY'}</StatusPill>
+                <StatusPill tone={result ? finalAction : 'READY'}>{result ? finalAction : 'READY'}</StatusPill>
                 <StatusPill tone="warn">Arc Testnet</StatusPill>
                 <StatusPill tone="pass">Renaiss backend-only</StatusPill>
               </div>
@@ -106,7 +108,10 @@ export default function App() {
                   <button
                     key={item}
                     type="button"
-                    onClick={() => setMode(item)}
+                    onClick={() => {
+                      setMode(item)
+                      setResult(null)
+                    }}
                     className={`rounded-xl px-4 py-2 text-sm font-black transition ${mode === item ? 'bg-bg-base text-brand-100 shadow-sm' : 'text-fg-subtle hover:text-fg-base'}`}
                   >
                     {item.toUpperCase()}
@@ -138,8 +143,14 @@ export default function App() {
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-          <AuthorizationPanel authorization={authorization} onChange={setAuthorization} />
-          <OfferSelector offers={offers} selectedOfferId={selectedOfferId} onSelect={setSelectedOfferId} />
+          <AuthorizationPanel authorization={authorization} onChange={(next) => {
+            setAuthorization(next)
+            setResult(null)
+          }} />
+          <OfferSelector offers={offers} selectedOfferId={selectedOfferId} onSelect={(id) => {
+            setSelectedOfferId(id)
+            setResult(null)
+          }} />
         </div>
 
         {signal ? <SignalPanel signal={signal} /> : null}

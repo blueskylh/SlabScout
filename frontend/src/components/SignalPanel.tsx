@@ -7,6 +7,12 @@ function money(value?: number | null) {
   return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function dateLabel(value?: string | null) {
+  if (!value) return 'unknown'
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString() : 'unknown'
+}
+
 export function SignalPanel({ signal }: { signal: Signal }) {
   const medianLine = signal.trend.find((line) => line.method === 'median')
   const points = medianLine?.points || []
@@ -45,7 +51,7 @@ export function SignalPanel({ signal }: { signal: Signal }) {
             <MetricCard label="7D Median" value={money(signal.valuation.medianUsd)} helper="硬规则主锚定价" />
             <MetricCard label="Mean" value={money(signal.valuation.meanUsd)} helper="与中位价偏差受限" />
             <MetricCard label="VWAP" value={money(signal.valuation.vwapUsd)} helper="成交权重一致性" />
-            <MetricCard label="Sources / Obs" value={`${signal.quality.sourceCount} / ${signal.quality.observationCount}`} helper={`last sale ${new Date(signal.quality.lastSaleAt).toLocaleDateString()}`} />
+            <MetricCard label="Sources / Obs" value={`${signal.quality.sourceCount} / ${signal.quality.observationCount}`} helper={`last sale ${dateLabel(signal.quality.lastSaleAt)}`} />
           </div>
 
           <div className="mt-5 rounded-2xl border border-border-strong bg-bg-chat p-4">

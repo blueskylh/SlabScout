@@ -15,4 +15,19 @@ The requested review loop was performed as source-reading passes, not as a subst
 
 Supplementary smoke validation after the manual passes confirmed the replay reserve branch returns `RESERVE` with proof + escrow, while the overpriced and low-confidence branches return `REJECT` without proof or escrow.
 
+## Second manual review loop
+
+A second requested source-reading loop was performed without using runtime checks as the review mechanism. Fixes from this loop are reflected in the current code.
+
+1. **Shared config pass** — re-read demo authorization, offers, confidence rank, money helpers, and stable JSON; confirmed placeholder addresses are valid-looking EVM addresses and no secrets are present.
+2. **Replay fixture pass** — re-read Renaiss-shaped card detail, FMV series, trades, and index fixture; confirmed transaction rows and listing rows remain distinguishable.
+3. **Renaiss client pass** — re-read config, cache, timeout, fetch, normalization, Live/Replay fallback; fixed non-`Error` fallback message handling.
+4. **Policy engine pass** — re-read every hard gate; added finite/positive numeric guards and an explicit `valuation-present` hard gate so missing median/mean/VWAP cannot slip through price checks.
+5. **MarketProof pass** — re-read proof payload, hash, signature, and outlier logic; confirmed listings are still excluded from completed-trade sample.
+6. **Agent orchestration pass** — re-read authorization merge, offer selection, timeline, proof-before-escrow, and audit creation; hardened null/invalid authorization handling and live-payment block behavior.
+7. **Payment/escrow adapter pass** — re-read Circle/Arc adapters; added positive-number validation for MarketProof fee, deposit, chain ID fallback, and proof-hash requirement before escrow.
+8. **Backend route pass** — re-read demo, scout, market-proof, status routes; made standalone MarketProof route return a payment-required response instead of issuing proof when payment is not actually `paid`.
+9. **Frontend UX pass** — re-read App and every SlabScout component; fixed stale result display when mode/offer/auth changes, safer API error parsing, cleaner null percentage rendering, safer date label, and receipt display in timeline.
+10. **Contract/docs/env pass** — re-read escrow contract, env examples, README, API notes, and this log; confirmed Arc Testnet/mock boundaries are documented and kept real credentials out of tracked files.
+
 Known boundary: Circle/Arc live execution is intentionally adapter-gated. The default demo path uses deterministic mock receipts until server-side Circle Agent Wallet credentials and deployed escrow addresses are configured.

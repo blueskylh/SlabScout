@@ -10,26 +10,33 @@ function runId() {
   return `run_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`
 }
 
+function finiteOrDefault(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
 function mergeAuthorization(input = {}) {
+  const safeInput = input && typeof input === 'object' ? input : {}
   return {
     ...DEFAULT_AUTHORIZATION,
-    ...input,
-    maxOfferUsd: Number(input.maxOfferUsd ?? DEFAULT_AUTHORIZATION.maxOfferUsd),
-    maxPriceVsMedianPct: Number(input.maxPriceVsMedianPct ?? DEFAULT_AUTHORIZATION.maxPriceVsMedianPct),
-    minSourceCount: Number(input.minSourceCount ?? DEFAULT_AUTHORIZATION.minSourceCount),
-    minObservationCount: Number(input.minObservationCount ?? DEFAULT_AUTHORIZATION.minObservationCount),
-    maxLastSaleAgeDays: Number(input.maxLastSaleAgeDays ?? DEFAULT_AUTHORIZATION.maxLastSaleAgeDays),
-    maxMethodDeviationPct: Number(input.maxMethodDeviationPct ?? DEFAULT_AUTHORIZATION.maxMethodDeviationPct),
-    maxIntelFeeUsdc: Number(input.maxIntelFeeUsdc ?? DEFAULT_AUTHORIZATION.maxIntelFeeUsdc),
-    maxDepositUsdc: Number(input.maxDepositUsdc ?? DEFAULT_AUTHORIZATION.maxDepositUsdc),
-    dailyBudgetUsdc: Number(input.dailyBudgetUsdc ?? DEFAULT_AUTHORIZATION.dailyBudgetUsdc),
-    spentTodayUsdc: Number(input.spentTodayUsdc ?? DEFAULT_AUTHORIZATION.spentTodayUsdc),
-    requireMarketProof: input.requireMarketProof ?? DEFAULT_AUTHORIZATION.requireMarketProof,
+    ...safeInput,
+    maxOfferUsd: finiteOrDefault(safeInput.maxOfferUsd, DEFAULT_AUTHORIZATION.maxOfferUsd),
+    maxPriceVsMedianPct: finiteOrDefault(safeInput.maxPriceVsMedianPct, DEFAULT_AUTHORIZATION.maxPriceVsMedianPct),
+    minSourceCount: finiteOrDefault(safeInput.minSourceCount, DEFAULT_AUTHORIZATION.minSourceCount),
+    minObservationCount: finiteOrDefault(safeInput.minObservationCount, DEFAULT_AUTHORIZATION.minObservationCount),
+    maxLastSaleAgeDays: finiteOrDefault(safeInput.maxLastSaleAgeDays, DEFAULT_AUTHORIZATION.maxLastSaleAgeDays),
+    maxMethodDeviationPct: finiteOrDefault(safeInput.maxMethodDeviationPct, DEFAULT_AUTHORIZATION.maxMethodDeviationPct),
+    maxIntelFeeUsdc: finiteOrDefault(safeInput.maxIntelFeeUsdc, DEFAULT_AUTHORIZATION.maxIntelFeeUsdc),
+    maxDepositUsdc: finiteOrDefault(safeInput.maxDepositUsdc, DEFAULT_AUTHORIZATION.maxDepositUsdc),
+    dailyBudgetUsdc: finiteOrDefault(safeInput.dailyBudgetUsdc, DEFAULT_AUTHORIZATION.dailyBudgetUsdc),
+    spentTodayUsdc: finiteOrDefault(safeInput.spentTodayUsdc, DEFAULT_AUTHORIZATION.spentTodayUsdc),
+    requireMarketProof: safeInput.requireMarketProof ?? DEFAULT_AUTHORIZATION.requireMarketProof,
   }
 }
 
 function selectOffer(body = {}) {
-  if (body.offer) return body.offer
+  const candidate = body.offer && typeof body.offer === 'object' ? body.offer : null
+  if (candidate?.id && Number.isFinite(Number(candidate.askUsd)) && Number.isFinite(Number(candidate.depositUsdc))) return candidate
   const requested = body.offerId || DEMO_OFFERS[0].id
   return DEMO_OFFERS.find((offer) => offer.id === requested) || DEMO_OFFERS[0]
 }
@@ -86,8 +93,13 @@ async function runScout(body = {}) {
   if (finalDecision.action === 'RESERVE') {
     if (!proof && authorization.requireMarketProof) {
       payment = await payForMarketProof({ runId: id, offer, authorization })
-      proof = buildMarketProof({ signal, offer, authorization, payment })
-      finalDecision = finalizeWithProof({ signal, offer, authorization, proof })
+      if (payment.status !== 'paid') {
+        finalDecision = { ...finalDecision, action: 'INVESTIGATE', explanation: '支付适配器未完成真实付款；保持调查状态，禁止锁订金。' }
+        pushTimeline(timeline, '支付保护', 'blocked', finalDecision.explanation, { receiptId: payment.receiptId })
+      } else {
+        proof = buildMarketProof({ signal, offer, authorization, payment })
+        finalDecision = finalizeWithProof({ signal, offer, authorization, proof })
+      }
     }
     if (!proof && finalDecision.action === 'RESERVE') {
       proof = buildMarketProof({ signal, offer, authorization, payment: null })

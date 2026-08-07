@@ -14,8 +14,12 @@ function appendAudit(entry) {
   if (memoryLog.length > MAX_MEMORY_ROWS) memoryLog.pop()
 
   if (process.env.SLABSCOUT_AUDIT_FILE === 'true') {
-    const file = path.join(process.cwd(), 'audit-log.jsonl')
-    fs.appendFileSync(file, `${JSON.stringify(row)}\n`)
+    try {
+      const file = path.join(process.cwd(), 'audit-log.jsonl')
+      fs.appendFileSync(file, `${JSON.stringify(row)}\n`)
+    } catch (error) {
+      row.auditWarning = error instanceof Error ? error.message : String(error)
+    }
   }
   return row
 }

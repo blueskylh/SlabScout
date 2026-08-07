@@ -21,21 +21,40 @@ function daysSince(iso, now = new Date()) {
   return Math.max(0, (now.getTime() - timestamp) / 86_400_000)
 }
 
+function finiteNumber(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function positiveNumber(value) {
+  const parsed = finiteNumber(value)
+  return parsed !== null && parsed > 0 ? parsed : null
+}
+
+function display(value, digits = 2) {
+  const rounded = round(value, digits)
+  return rounded === null ? 'missing' : rounded
+}
+
 function evaluateSignal({ signal, offer, authorization, now = new Date(), ignoreRefreshing = false, proof = null }) {
   const valuation = signal.valuation || {}
   const quality = signal.quality || {}
   const identity = signal.identity || {}
-  const medianUsd = valuation.medianUsd
-  const meanUsd = valuation.meanUsd
-  const vwapUsd = valuation.vwapUsd
-  const askUsd = Number(offer.askUsd)
-  const depositUsdc = Number(offer.depositUsdc)
-  const intelFee = Number(authorization.intelFeeUsdc || process.env.MARKET_PROOF_PRICE_USDC || 0.001)
-  const allowedByMedian = medianUsd ? round(medianUsd * (authorization.maxPriceVsMedianPct / 100), 2) : null
-  const allowedAskUsd = Math.min(
-    Number.isFinite(Number(authorization.maxOfferUsd)) ? Number(authorization.maxOfferUsd) : Number.POSITIVE_INFINITY,
-    allowedByMedian || Number.POSITIVE_INFINITY,
-  )
+  const medianUsd = positiveNumber(valuation.medianUsd)
+  const meanUsd = positiveNumber(valuation.meanUsd)
+  const vwapUsd = positiveNumber(valuation.vwapUsd)
+  const askUsd = positiveNumber(offer.askUsd)
+  const depositUsdc = positiveNumber(offer.depositUsdc)
+  const intelFee = positiveNumber(authorization.intelFeeUsdc || process.env.MARKET_PROOF_PRICE_USDC || 0.001)
+  const maxOfferUsd = positiveNumber(authorization.maxOfferUsd)
+  const maxPriceVsMedianPct = positiveNumber(authorization.maxPriceVsMedianPct)
+  const maxIntelFeeUsdc = positiveNumber(authorization.maxIntelFeeUsdc)
+  const maxDepositUsdc = positiveNumber(authorization.maxDepositUsdc)
+  const dailyBudgetUsdc = positiveNumber(authorization.dailyBudgetUsdc)
+  const spentTodayUsdc = finiteNumber(authorization.spentTodayUsdc) ?? 0
+  const allowedByMedian = medianUsd && maxPriceVsMedianPct ? round(medianUsd * (maxPriceVsMedianPct / 100), 2) : null
+  const allowedAskCandidates = [maxOfferUsd, allowedByMedian].filter((value) => typeof value === 'number' && Number.isFinite(value))
+  const allowedAskUsd = allowedAskCandidates.length > 0 ? Math.min(...allowedAskCandidates) : null
   const meanDeviationPct = pctDiff(meanUsd, medianUsd)
   const vwapDeviationPct = pctDiff(vwapUsd, medianUsd)
   const saleAgeDays = daysSince(quality.lastSaleAt, now)
@@ -69,43 +88,49 @@ function evaluateSignal({ signal, offer, authorization, now = new Date(), ignore
       'freshness',
       '最近成交足够新',
       saleAgeDays <= Number(authorization.maxLastSaleAgeDays),
-      `${round(saleAgeDays, 1)}d / ${authorization.maxLastSaleAgeDays}d`,
+      `${display(saleAgeDays, 1)}d / ${authorization.maxLastSaleAgeDays}d`,
+    ),
+    check(
+      'valuation-present',
+      '7 日中位价/均价/VWAP 存在',
+      Boolean(medianUsd && meanUsd && vwapUsd),
+      `median=$${display(medianUsd)}, mean=$${display(meanUsd)}, vwap=$${display(vwapUsd)}`,
     ),
     check(
       'ask-discount',
       '报价低于授权价格上限',
-      Number.isFinite(askUsd) && Number.isFinite(allowedAskUsd) && askUsd <= allowedAskUsd,
-      `ask=$${round(askUsd, 2)}, allowed=$${round(allowedAskUsd, 2)}`,
+      askUsd !== null && allowedAskUsd !== null && askUsd <= allowedAskUsd,
+      `ask=$${display(askUsd)}, allowed=$${display(allowedAskUsd)}`,
     ),
     check(
       'mean-consistency',
       '均价与中位价偏差可接受',
       meanDeviationPct !== null && meanDeviationPct <= Number(authorization.maxMethodDeviationPct),
-      `${round(meanDeviationPct, 2)}% / ${authorization.maxMethodDeviationPct}%`,
+      `${display(meanDeviationPct, 2)}% / ${authorization.maxMethodDeviationPct}%`,
     ),
     check(
       'vwap-consistency',
       'VWAP 与中位价偏差可接受',
       vwapDeviationPct !== null && vwapDeviationPct <= Number(authorization.maxMethodDeviationPct),
-      `${round(vwapDeviationPct, 2)}% / ${authorization.maxMethodDeviationPct}%`,
+      `${display(vwapDeviationPct, 2)}% / ${authorization.maxMethodDeviationPct}%`,
     ),
     check(
       'intel-budget',
       '情报费不超过单次授权',
-      intelFee <= Number(authorization.maxIntelFeeUsdc),
-      `${intelFee} / ${authorization.maxIntelFeeUsdc} USDC`,
+      intelFee !== null && maxIntelFeeUsdc !== null && intelFee <= maxIntelFeeUsdc,
+      `${display(intelFee, 6)} / ${display(maxIntelFeeUsdc, 6)} USDC`,
     ),
     check(
       'deposit-budget',
       '订金不超过单次授权',
-      depositUsdc <= Number(authorization.maxDepositUsdc),
-      `${depositUsdc} / ${authorization.maxDepositUsdc} USDC`,
+      depositUsdc !== null && maxDepositUsdc !== null && depositUsdc <= maxDepositUsdc,
+      `${display(depositUsdc, 6)} / ${display(maxDepositUsdc, 6)} USDC`,
     ),
     check(
       'daily-budget',
       '累计日支出不超过授权',
-      Number(authorization.spentTodayUsdc || 0) + intelFee + depositUsdc <= Number(authorization.dailyBudgetUsdc),
-      `${round(Number(authorization.spentTodayUsdc || 0) + intelFee + depositUsdc, 6)} / ${authorization.dailyBudgetUsdc} USDC`,
+      intelFee !== null && depositUsdc !== null && dailyBudgetUsdc !== null && spentTodayUsdc + intelFee + depositUsdc <= dailyBudgetUsdc,
+      `${display(spentTodayUsdc + (intelFee || 0) + (depositUsdc || 0), 6)} / ${display(dailyBudgetUsdc, 6)} USDC`,
     ),
   ]
 
@@ -134,7 +159,7 @@ function evaluateSignal({ signal, offer, authorization, now = new Date(), ignore
       askUsd: round(askUsd, 2),
       medianUsd: round(medianUsd, 2),
       allowedAskUsd: round(allowedAskUsd, 2),
-      discountToMedianPct: medianUsd ? round((1 - askUsd / medianUsd) * 100, 2) : null,
+      discountToMedianPct: askUsd !== null && medianUsd ? round((1 - askUsd / medianUsd) * 100, 2) : null,
       meanDeviationPct: round(meanDeviationPct, 2),
       vwapDeviationPct: round(vwapDeviationPct, 2),
       saleAgeDays: round(saleAgeDays, 1),
