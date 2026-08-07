@@ -10,6 +10,7 @@ Authorization
   -> Renaiss cert-first lookup
   -> Renaiss card detail / FMV / trades
   -> Deterministic policy
+  -> Arc/Circle LiveSpendPreflight before any x402 payment intent
   -> Circle/x402 MarketProof payment when required
   -> MarketProof generation + self verification
   -> Arc Testnet ReservationEscrow reserve
@@ -80,7 +81,9 @@ Replay payment 使用：
 - `replayAccepted = true`
 - 无 tx hash / explorer URL
 
-Live payment 已接入 Circle CLI buyer flow 与 x402 seller endpoint，但默认仍 fail-closed：没有 operator token、可写 state file、Circle CLI 登录、Agent Wallet、seller address、service URL 或可信 receipt/tx 时，只返回 `live-unavailable/*` 或 `reconciliation_required`，不会显示成功。
+Live payment 已接入 Circle CLI buyer flow 与 x402 seller endpoint，但默认仍 fail-closed：没有 operator token、可写 state file、Circle CLI `0.0.6` testnet `tokenStatus=VALID`、Agent Wallet、seller address、service URL 或可信 receipt/tx 时，只返回 `live-unavailable/*` 或 `reconciliation_required`，不会显示成功。
+
+在 `claimPaymentIntent` / `circle services pay` 之前，后端 `runScout()` 会强制执行 `LiveSpendPreflight`：Arc chainId、escrow bytecode、`escrow.usdc()`、`maxReservationAmount()`、`reservations(offerHash)`、Agent Wallet 链上 USDC 余额、gas/paymaster 信号、Circle CLI testnet session 和钱包控制权都必须通过。Gateway balance 只用于 x402/Gateway readiness，不能替代 escrow deposit 的链上 USDC 余额。
 
 可信 payment receipt verifier 绑定：runId、idempotencyKey、offerId、targetItemId、targetHref、payer、payee/service/payeeAddress、Arc Testnet、chainId、USDC address、amount、Circle payment ID 或 tx hash、paidAt、providerStatus，并拒绝 replay / 过期 / 金额或资产不一致。x402 seller middleware 仅接受 `eip155:5042002`，且 proof endpoint 会重新拉取 Renaiss 数据，不签客户端提交的数据。
 
@@ -112,11 +115,15 @@ Live payment 已接入 Circle CLI buyer flow 与 x402 seller endpoint，但默�
 
 Live escrow 通过 Arc RPC 校验 chainId、查询已有 reservation、检查 USDC allowance，必要时用 Circle CLI approve，然后调用 `reserve(bytes32,address,uint256,bytes32,uint64)`。前端只有在真实 tx hash、block number、matching `Reserved` event 和 chain receipt 都存在时才能显示 `chain-confirmed`。Replay escrow 使用 `replay-escrow-simulated`，`chainConfirmed=false`。
 
+如果 Circle 或 Arc 已经有提交证据但状态未知，run 会进入 `reconciliation_required`，预算 hold 保持 `reconciliation-held`。新的 live run 会在 idempotency claim 之前被 unresolved reconciliation 阻断，避免通过换 key 或刷新页面重复付款。
+
 ## 8. Persistent state and audit
 
 后端 state store 用于 run/idempotency/paymentIntent/payment/proof/reservation/audit/budget hold。Live 执行缺少可写 `SLABSCOUT_STATE_FILE` 时 fail-closed，不会花钱；`DATABASE_URL` 在本 MVP 中不是已实现持久化。
 
 同一 idempotencyKey 重试返回原结果；同一 receipt、同一 live MarketProof payment intent 或同一 offer reservation 不能被不同 run 重放。预算必须在执行前保留，失败后释放。
+
+Operator-protected reconciliation endpoint 只接受 runId，不接受客户端声明的 `confirmed` / `not-submitted` 结果。它会查询 Circle/Arc 权威状态并原子更新 run、paymentIntent/reservation 和 budgetHold；若结果仍 ambiguous，则保持 unresolved，不 force-clear。
 
 ## 9. Live mode and operator boundary
 

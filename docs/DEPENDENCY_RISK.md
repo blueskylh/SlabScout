@@ -4,15 +4,26 @@
 
 This review records the dependency-audit decision for the Arc Agentic Economy MVP branch. It is intentionally a review note, not an `npm audit fix` output, because automatic fix can rewrite unrelated dependency trees and destabilize the demo.
 
-## Backend audit exception
+## Current audit results
 
-`npm --prefix backend audit --json` currently reports:
+As of this branch and lockfile:
 
 ```text
-2 high, 6 moderate
+npm --prefix backend audit --json
+metadata.vulnerabilities = { info: 0, low: 0, moderate: 6, high: 2, critical: 0, total: 8 }
+
+npm --prefix frontend audit --json
+metadata.vulnerabilities = { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 }
+
+npm --prefix frontend audit --omit=dev --json
+metadata.vulnerabilities = { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 }
 ```
 
-High-severity findings are reachable through the transitive chain:
+The remaining frontend finding is a dev/build-tool Vite advisory group. The single Vite audit node includes one high advisory and one moderate advisory in `via`, but npm's vulnerability metadata counts the package node as **1 high / 0 moderate**. Runtime production dependencies report **0** with `--omit=dev`.
+
+## Backend audit exception
+
+High-severity backend findings are reachable through the transitive chain:
 
 ```text
 @surf-ai/sdk -> drizzle-orm
@@ -21,7 +32,7 @@ High-severity findings are reachable through the transitive chain:
 Assessment:
 
 - SlabScout does not expose arbitrary SQL or user-controlled database query construction through `@surf-ai/sdk`.
-- Live fund movement is gated by deterministic offer/authorization checks, operator token, idempotency, payment/proof verification, and Arc Testnet-only runtime validation.
+- Live fund movement is gated by deterministic offer/authorization checks, operator token, idempotency, payment/proof verification, LiveSpendPreflight, reconciliation blocking, and Arc Testnet-only runtime validation.
 - The affected dependency is transitive and has no direct application usage path in the SlabScout execution flow reviewed here.
 - No compatible upstream fix is applied in this branch context; do not force a broad `npm audit fix` until the upstream dependency publishes a compatible patched release.
 
@@ -36,8 +47,6 @@ Decision:
 ## Frontend cleanup
 
 The frontend previously listed `echarts` and `echarts-for-react`, but the application has no chart rendering code and no imports of either package. They were removed to eliminate unused moderate-severity frontend dependency surface.
-
-After removal, `npm --prefix frontend audit --json` reports one remaining high advisory on the Vite dev/build toolchain. It is not a runtime browser dependency in the built MVP, but should be upgraded before production hardening once a compatible Vite patch is selected.
 
 Decision:
 

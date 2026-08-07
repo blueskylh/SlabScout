@@ -15,6 +15,7 @@ const { payForMarketProof, reserveEscrow, isReconciliationError, reconciliationS
 const { appendAudit } = require('./audit-log')
 const stateStore = require('./state-store')
 const { resolveEffectiveMode } = require('./mode')
+const { assertLiveSpendPreflight } = require('./live-spend-preflight')
 
 function runId() {
   return `run_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`
@@ -155,14 +156,6 @@ async function runScout(body = {}) {
   const owner = mode === 'live' ? 'operator:live' : 'demo-operator'
   assertValid('authorization', validateAuthorization(authorization))
   assertValid('offer', validateOffer(offer))
-
-  const claim = await stateStore.claimIdempotency({ runId: id, idempotencyKey, offerId: offer.id, mode })
-  if (!claim.claimed && claim.existingRun?.result) return { ...claim.existingRun.result, idempotentReplay: true }
-  if (!claim.claimed) {
-    const error = new Error('idempotencyKey run is already in progress')
-    error.statusCode = 409
-    throw error
-  }
   if (mode === 'live') {
     const unresolved = await stateStore.listUnresolvedReconciliations({ owner })
     if (unresolved.length > 0) {
@@ -171,6 +164,14 @@ async function runScout(body = {}) {
       error.unresolved = unresolved
       throw error
     }
+  }
+
+  const claim = await stateStore.claimIdempotency({ runId: id, idempotencyKey, offerId: offer.id, mode })
+  if (!claim.claimed && claim.existingRun?.result) return { ...claim.existingRun.result, idempotentReplay: true }
+  if (!claim.claimed) {
+    const error = new Error('idempotencyKey run is already in progress')
+    error.statusCode = 409
+    throw error
   }
 
   await stateStore.saveAuthorizationSnapshot({ runId: id, owner, authorization })
@@ -201,6 +202,10 @@ async function runScout(body = {}) {
     finalDecision = preliminary
 
     if (preliminary.action === 'INVESTIGATE' && authorization.requireMarketProof === true) {
+      if (mode === 'live') {
+        const preflight = await assertLiveSpendPreflight({ offer, authorization, owner })
+        pushTimeline(timeline, 'Arc 付款前预检', 'done', `Arc chain/escrow/USDC/reservation/wallet/gas checks passed before x402 payment；offerHash=${preflight.offerHash.slice(0, 18)}…。`, { checks: preflight.checks })
+      }
       await stateStore.claimPaymentIntent({ runId: id, idempotencyKey, offerId: offer.id, owner, amountUsdc: Number(process.env.MARKET_PROOF_PRICE_USDC || 0.001), budgetImpact })
       await stateStore.markRunStage(id, 'payment-submitting')
       payment = await payForMarketProof({ runId: id, idempotencyKey, offer, authorization, dataMode: signal.dataMode })

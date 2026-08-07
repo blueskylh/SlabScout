@@ -8,7 +8,7 @@ const { replayCardDetail, replayFmvSeries, replayTrades, replayCertLookup, repla
 const { buildPolicyProof, verifyMarketProof } = require('../packages/market-proof')
 const { getReplaySignal } = require('../packages/renaiss-client')
 const { evaluateSignal } = require('../packages/policy-engine')
-const { resetStateForTests, getBudgetHold } = require('../backend/lib/state-store')
+const { resetStateForTests, getBudgetHold, getIdempotencyRunId, getReconciliationContext } = require('../backend/lib/state-store')
 const { appendAudit } = require('../backend/lib/audit-log')
 const { reserveEscrow } = require('../backend/lib/circle-adapters')
 const { RPC_URL } = require('../backend/lib/arc-rpc')
@@ -16,9 +16,14 @@ const {
   sanitize,
   extractTxHash,
   normalizeServicesPayResult,
+  normalizeWalletStatus,
+  circleTestnetSessionOk,
+  circleWalletControlsAddress,
   CIRCLE_CLI_VERIFIED_VERSION_RANGE,
 } = require('../backend/lib/circle-cli')
 const marketProofRoute = require('../backend/routes/market-proof')
+const { assertLiveSpendPreflight, deterministicOfferHash, amountMinorUsdc } = require('../backend/lib/live-spend-preflight')
+const { resolveReconciliation } = require('../backend/lib/reconciliation')
 
 function withEnv(patch, fn) {
   const prev = {}
@@ -106,6 +111,66 @@ function proofBody(overrides = {}) {
   }
 }
 
+const TEST_AGENT_WALLET = '0xA9E0000000000000000000000000000000000001'
+const TEST_ESCROW = '0xE500000000000000000000000000000000000001'
+const TEST_SELLER = '0x7000000000000000000000000000000000000001'
+
+function circleStatusFixture({ testnetTokenStatus = 'VALID', mainnetTokenStatus = 'VALID', walletAddress = TEST_AGENT_WALLET, paymasterStatus = 'AVAILABLE' } = {}) {
+  return {
+    success: true,
+    data: {
+      mainnet: { tokenStatus: mainnetTokenStatus, walletAddress: '0x1111111111111111111111111111111111111111' },
+      testnet: { tokenStatus: testnetTokenStatus, walletAddress, paymasterStatus },
+    },
+  }
+}
+
+function normalizedCircleStatus(options = {}) {
+  const parsed = circleStatusFixture(options)
+  return { ok: true, parsed, normalized: normalizeWalletStatus(parsed) }
+}
+
+function healthyLiveEnv(suffix = 'healthy') {
+  return {
+    SLABSCOUT_OPERATOR_TOKEN: 'op',
+    SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-${suffix}.json`,
+    SLABSCOUT_DEFAULT_MODE: 'replay',
+    CIRCLE_MODE: 'live',
+    ARC_EXECUTION_MODE: 'live',
+    RENAISS_API_KEY: 'test-key',
+    RENAISS_API_SECRET: 'test-secret',
+    MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
+    POLICY_PROOF_SIGNING_SECRET: 'live-policy-proof-test-secret',
+    CIRCLE_AGENT_WALLET_ADDRESS: TEST_AGENT_WALLET,
+    AGENT_WALLET_ADDRESS: TEST_AGENT_WALLET,
+    MARKET_PROOF_SERVICE_URL: 'https://marketproof.example.test/prove',
+    MARKET_PROOF_SELLER_ADDRESS: TEST_SELLER,
+    RESERVATION_ESCROW_ADDRESS: TEST_ESCROW,
+    SELLER_WALLET_ADDRESS: TEST_SELLER,
+    ARC_CHAIN_ID: String(ARC_TESTNET_CHAIN_ID),
+    ARC_USDC_ADDRESS: ARC_TESTNET_USDC_ADDRESS,
+    MARKET_PROOF_PRICE_USDC: '0.001',
+  }
+}
+
+function healthyPreflightArc(overrides = {}) {
+  return {
+    RPC_URL,
+    assertArcChain: async () => ARC_TESTNET_CHAIN_ID,
+    getCode: async () => '0x60016001',
+    getEscrowUsdc: async () => ARC_TESTNET_USDC_ADDRESS,
+    getEscrowMaxReservationAmount: async () => 1000000n,
+    getReservation: async () => ({ status: 0 }),
+    getTokenBalance: async () => 1000000n,
+    getNativeBalance: async () => 0n,
+    ...overrides,
+  }
+}
+
+function healthyPreflightCircle(options = {}) {
+  return { circleWalletStatus: async () => normalizedCircleStatus(options) }
+}
+
 test.beforeEach(() => resetStateForTests())
 
 test('P0 live UI/API source always sends live idempotencyKey and reuses pending retry key', () => {
@@ -138,7 +203,7 @@ test('P0 circle-cli keeps txHash/proofHash while redacting private credentials',
   assert.doesNotMatch(servicesPaySource, /--idempotency-key/)
 })
 
-test('P0 circle-cli normalizes wallet execute and services pay 0.0.6 envelopes', () => {
+test('P0 circle-cli normalizes wallet execute, services pay, and real 0.0.6 status envelopes', () => {
   const txHash = `0x${'c'.repeat(64)}`
   assert.equal(extractTxHash({ data: { txHash } }), txHash)
   const seller = { payment: { receiptId: 'receipt_1' }, proof: { proofHash: `0x${'d'.repeat(64)}` } }
@@ -148,6 +213,21 @@ test('P0 circle-cli normalizes wallet execute and services pay 0.0.6 envelopes',
   const quiet = normalizeServicesPayResult({ parsed: seller })
   assert.equal(quiet.ok, true)
   assert.equal(quiet.sellerResponse.payment.receiptId, 'receipt_1')
+
+  const valid = { parsed: circleStatusFixture() }
+  valid.normalized = normalizeWalletStatus(valid.parsed)
+  assert.equal(valid.normalized.data.testnet.tokenStatus, 'VALID')
+  assert.equal(circleTestnetSessionOk(valid), true)
+  assert.equal(circleWalletControlsAddress(valid, TEST_AGENT_WALLET), true)
+  const expired = { parsed: circleStatusFixture({ testnetTokenStatus: 'EXPIRED' }) }
+  expired.normalized = normalizeWalletStatus(expired.parsed)
+  assert.equal(circleTestnetSessionOk(expired), false)
+  const notLoggedIn = { parsed: circleStatusFixture({ testnetTokenStatus: 'NOT_LOGGED_IN' }) }
+  notLoggedIn.normalized = normalizeWalletStatus(notLoggedIn.parsed)
+  assert.equal(circleTestnetSessionOk(notLoggedIn), false)
+  const mainnetOnly = { parsed: circleStatusFixture({ mainnetTokenStatus: 'VALID', testnetTokenStatus: 'NOT_LOGGED_IN' }) }
+  mainnetOnly.normalized = normalizeWalletStatus(mainnetOnly.parsed)
+  assert.equal(circleTestnetSessionOk(mainnetOnly), false)
 })
 
 test('P0 unknown offerId and bad authorization fail before x402 gateway', async () => withEnv({ MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001' }, async () => {
@@ -262,17 +342,12 @@ test('P0 Arc RPC default uses .network endpoint', () => {
   assert.equal(RPC_URL, 'https://rpc.testnet.arc.network')
 })
 
-test('P0 live readiness is operator-protected and read-only injectable', async () => withEnv({
-  SLABSCOUT_OPERATOR_TOKEN: 'op',
-  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-readiness.json`,
-  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
-  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
-}, async () => {
+test('P0 live readiness is operator-protected and read-only injectable', async () => withEnv(healthyLiveEnv('readiness'), async () => {
   const status = require('../backend/routes/status')
   const readiness = await status._internals.collectLiveReadiness({
     circle: {
       circleCliVersion: async () => ({ version: '0.0.6', supported: true }),
-      circleWalletStatus: async () => ({ ok: true, normalized: { ok: true, data: { authenticated: true } } }),
+      circleWalletStatus: async () => normalizedCircleStatus(),
       circleGatewayBalance: async () => ({ ok: true, normalized: { ok: true, data: { total: 1 } } }),
     },
     arc: {
@@ -287,19 +362,14 @@ test('P0 live readiness is operator-protected and read-only injectable', async (
 }))
 
 
-test('P0 live readiness HTTP requires operator token and returns 200 for read-only checks', async () => withEnv({
-  SLABSCOUT_OPERATOR_TOKEN: 'op',
-  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-readiness-http.json`,
-  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
-  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
-}, async () => {
+test('P0 live readiness HTTP requires operator token and returns 200 for read-only checks', async () => withEnv(healthyLiveEnv('readiness-http'), async () => {
   const express = require('../backend/node_modules/express')
   const status = require('../backend/routes/status')
   const app = express()
   app.use('/api/status', status.createStatusRouter({
     circle: {
       circleCliVersion: async () => ({ version: '0.0.6', supported: true }),
-      circleWalletStatus: async () => ({ normalized: { ok: true, data: { authenticated: true } } }),
+      circleWalletStatus: async () => normalizedCircleStatus(),
       circleGatewayBalance: async () => ({ normalized: { ok: true, data: { total: 1 } } }),
     },
     arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
@@ -311,14 +381,9 @@ test('P0 live readiness HTTP requires operator token and returns 200 for read-on
   assert.equal(ok.body.ok, true)
 }))
 
-test('P0 live readiness is false for CLI ok=false, empty/zero balance, and wrong CLI version', async () => withEnv({
-  SLABSCOUT_OPERATOR_TOKEN: 'op',
-  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-readiness-false.json`,
-  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
-  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
-}, async () => {
+test('P0 live readiness is false for CLI ok=false, empty/zero balance, and wrong CLI version', async () => withEnv(healthyLiveEnv('readiness-false'), async () => {
   const status = require('../backend/routes/status')
-  async function readiness({ version = { version: '0.0.6', supported: true }, wallet = { normalized: { ok: true, data: { authenticated: true } } }, balance = { normalized: { ok: true, data: { total: 1 } } } }) {
+  async function readiness({ version = { version: '0.0.6', supported: true }, wallet = normalizedCircleStatus(), balance = { normalized: { ok: true, data: { total: 1 } } } }) {
     return status._internals.collectLiveReadiness({
       circle: {
         circleCliVersion: async () => version,
@@ -328,10 +393,127 @@ test('P0 live readiness is false for CLI ok=false, empty/zero balance, and wrong
       arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
     })
   }
-  assert.equal((await readiness({ wallet: { normalized: { ok: false, data: { authenticated: true } } } })).ok, false)
+  assert.equal((await readiness({ wallet: { normalized: { ok: false, data: { testnet: { tokenStatus: 'EXPIRED' } } } } })).ok, false)
   assert.equal((await readiness({ balance: { normalized: { ok: true, data: {} } } })).ok, false)
   assert.equal((await readiness({ balance: { normalized: { ok: true, data: { total: 0 } } } })).ok, false)
   assert.equal((await readiness({ version: { version: '0.0.5', supported: false } })).ok, false)
+}))
+
+
+test('P0 readiness is false when live config is missing even if read-only externals are healthy', async () => withEnv({ ...healthyLiveEnv('readiness-config-missing'), MARKET_PROOF_SIGNING_SECRET: undefined }, async () => {
+  const status = require('../backend/routes/status')
+  const readiness = await status._internals.collectLiveReadiness({
+    circle: { circleCliVersion: async () => ({ version: '0.0.6', supported: true }), circleWalletStatus: async () => normalizedCircleStatus(), circleGatewayBalance: async () => ({ normalized: { ok: true, data: { total: 1 } } }) },
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
+  })
+  const config = readiness.checks.find((check) => check.label === 'live-config')
+  assert.equal(readiness.ok, false)
+  assert.equal(config.ok, false)
+  assert.ok(config.value.liveMissing.includes('MARKET_PROOF_SIGNING_SECRET(non-default)'))
+}))
+
+test('P0 readiness is false and liveMissing is exact when payment or escrow mode is not live', async () => withEnv({ ...healthyLiveEnv('readiness-modes'), CIRCLE_MODE: 'mock', ARC_EXECUTION_MODE: 'mock' }, async () => {
+  const status = require('../backend/routes/status')
+  const summary = status._internals.liveConfigSummary()
+  assert.equal(summary.liveConfigComplete, false)
+  assert.ok(summary.liveMissing.includes('CIRCLE_MODE=live'))
+  assert.ok(summary.liveMissing.includes('ARC_EXECUTION_MODE=live'))
+  const readiness = await status._internals.collectLiveReadiness({
+    circle: { circleCliVersion: async () => ({ version: '0.0.6', supported: true }), circleWalletStatus: async () => normalizedCircleStatus(), circleGatewayBalance: async () => ({ normalized: { ok: true, data: { total: 1 } } }) },
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
+  })
+  assert.equal(readiness.ok, false)
+}))
+
+test('P0 readiness is false when unresolved reconciliation exists', async () => withEnv(healthyLiveEnv('readiness-unresolved'), async () => {
+  const status = require('../backend/routes/status')
+  const stateStore = require('../backend/lib/state-store')
+  await stateStore.claimIdempotency({ runId: 'run_ready_unresolved', idempotencyKey: 'idem_ready_unresolved', offerId: DEMO_OFFERS[0].id, mode: 'live' })
+  await stateStore.reserveBudget({ runId: 'run_ready_unresolved', owner: 'operator:live', amountUsdc: 0.1, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.releaseBudget('run_ready_unresolved', 'reconciliation-held')
+  const readiness = await status._internals.collectLiveReadiness({
+    circle: { circleCliVersion: async () => ({ version: '0.0.6', supported: true }), circleWalletStatus: async () => normalizedCircleStatus(), circleGatewayBalance: async () => ({ normalized: { ok: true, data: { total: 1 } } }) },
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
+  })
+  const unresolved = readiness.checks.find((check) => check.label === 'unresolved-reconciliation')
+  assert.equal(readiness.ok, false)
+  assert.equal(unresolved.ok, false)
+  assert.equal(unresolved.value.count, 1)
+}))
+
+
+test('P0 LiveSpendPreflight blocks wallet balance, wrong escrow USDC, low max amount, existing reservation, and unresolved before x402', async () => withEnv(healthyLiveEnv('spend-preflight'), async () => {
+  async function blocked(arcOverrides = {}, stateOverrides = {}) {
+    let servicesPayCalls = 0
+    let walletExecuteCalls = 0
+    await assert.rejects(() => assertLiveSpendPreflight({
+      offer: DEMO_OFFERS[0],
+      authorization: DEFAULT_AUTHORIZATION,
+      circle: healthyPreflightCircle(),
+      arc: healthyPreflightArc(arcOverrides),
+      state: { listUnresolvedReconciliations: async () => [], ...stateOverrides },
+    }), /live|USDC|Reservation|balance|reconciliation/i)
+    assert.equal(servicesPayCalls, 0)
+    assert.equal(walletExecuteCalls, 0)
+  }
+  await blocked({ getTokenBalance: async () => 99999n })
+  await blocked({ getEscrowUsdc: async () => '0x3600000000000000000000000000000000000001' })
+  await blocked({ getEscrowMaxReservationAmount: async () => 99999n })
+  await blocked({ getReservation: async () => ({ status: 1 }) })
+  await blocked({}, { listUnresolvedReconciliations: async () => [{ runId: 'run_unresolved' }] })
+}))
+
+test('P0 direct POST /api/scout/run cannot bypass Arc preflight before services pay', async () => withEnv({ ...healthyLiveEnv('direct-post-preflight'), CIRCLE_CLI_BIN: `/tmp/slabscout-circle-${process.pid}.js` }, async () => {
+  const { encodeFunctionResult, parseAbi } = require('../backend/node_modules/viem')
+  const express = require('../backend/node_modules/express')
+  const scout = require('../backend/routes/scout')
+  const logPath = `/tmp/slabscout-circle-${process.pid}.log`
+  const circleBin = process.env.CIRCLE_CLI_BIN
+  fs.writeFileSync(circleBin, `#!/usr/bin/env node
+const fs = require('node:fs')
+const log = ${JSON.stringify(logPath)}
+const args = process.argv.slice(2)
+fs.appendFileSync(log, args.join(' ') + '\\n')
+if (args.join(' ') === 'wallet status --type agent --output json') {
+  console.log(${JSON.stringify(JSON.stringify(circleStatusFixture()))})
+  process.exit(0)
+}
+console.log(JSON.stringify({ success: true, data: {} }))
+`)
+  fs.chmodSync(circleBin, 0o700)
+  const prevFetch = global.fetch
+  const escrowAbi = parseAbi(['function usdc() view returns (address)'])
+  global.fetch = async (url, options = {}) => {
+    const bodyText = String(options.body || '')
+    if (bodyText.includes('jsonrpc')) {
+      const body = JSON.parse(bodyText)
+      if (body.method === 'eth_chainId') return { ok: true, json: async () => ({ result: `0x${ARC_TESTNET_CHAIN_ID.toString(16)}` }) }
+      if (body.method === 'eth_getCode') return { ok: true, json: async () => ({ result: '0x60016001' }) }
+      if (body.method === 'eth_call') return { ok: true, json: async () => ({ result: encodeFunctionResult({ abi: escrowAbi, functionName: 'usdc', result: '0x3600000000000000000000000000000000000001' }) }) }
+    }
+    const href = String(url)
+    let body = replayCardDetail
+    if (href.includes('/v1/graded/')) body = replayCertLookup
+    else if (href.includes('/fmv-series')) body = replayFmvSeries
+    else if (href.includes('/trades')) body = replayTrades
+    else if (href.endsWith('/v1/indices')) body = replayIndices
+    return { ok: true, status: 200, text: async () => JSON.stringify(body), headers: { get: () => null }, url: href }
+  }
+  try {
+    const app = express()
+    app.use(express.json())
+    app.use('/api/scout', scout)
+    const res = await request(app, { path: '/api/scout/run', method: 'POST', headers: { 'x-slabscout-operator-token': 'op' }, body: { mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'idem_direct_post_preflight', authorization: DEFAULT_AUTHORIZATION } })
+    assert.equal(res.status, 409)
+    const log = fs.readFileSync(logPath, 'utf8')
+    assert.match(log, /wallet status --type agent --output json/)
+    assert.doesNotMatch(log, /services pay/)
+    assert.doesNotMatch(log, /wallet execute/)
+  } finally {
+    global.fetch = prevFetch
+    fs.rmSync(circleBin, { force: true })
+    fs.rmSync(logPath, { force: true })
+  }
 }))
 
 test('P0 reserve receipt timeout returns reconciliation_required and preserves submitted tx metadata', async () => withEnv({
@@ -508,6 +690,7 @@ test('P0 unresolved reconciliation blocks new live runs before external calls', 
     const { runScout } = require('../backend/lib/scout-agent')
     await assert.rejects(() => runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'idem_new_blocked', authorization: DEFAULT_AUTHORIZATION, operatorAuthorized: true }), /Unresolved live reconciliation/)
     assert.equal(called, false)
+    assert.equal(await getIdempotencyRunId('idem_new_blocked'), null)
   } finally {
     global.fetch = prevFetch
   }
@@ -531,6 +714,98 @@ test('P0 reconciliation list is operator protected and returns unresolved state'
   assert.equal(ok.status, 200)
   assert.equal(ok.body.count, 1)
   assert.equal(ok.body.unresolved[0].runId, 'run_recon_list')
+}))
+
+
+test('P1 reconciliation resolve confirms Arc reservation and duplicate resolve is safe', async () => withEnv(healthyLiveEnv('resolve-confirmed'), async () => {
+  const stateStore = require('../backend/lib/state-store')
+  const runId = 'run_resolve_confirmed'
+  const idempotencyKey = 'idem_resolve_confirmed'
+  const offerHash = deterministicOfferHash(DEMO_OFFERS[0])
+  const amountMinor = amountMinorUsdc(DEMO_OFFERS[0].depositUsdc).toString()
+  const proofHash = `0x${'f'.repeat(64)}`
+  await stateStore.claimIdempotency({ runId, idempotencyKey, offerId: DEMO_OFFERS[0].id, mode: 'live' })
+  await stateStore.reserveBudget({ runId, owner: 'operator:live', amountUsdc: 0.101, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.claimPaymentIntent({ runId, idempotencyKey, offerId: DEMO_OFFERS[0].id, owner: 'operator:live', amountUsdc: 0.001, budgetImpact: true })
+  await stateStore.recordReservation({ runId, offerHash, status: 'reconciliation_required', escrow: TEST_ESCROW, usdc: ARC_TESTNET_USDC_ADDRESS, buyer: TEST_AGENT_WALLET, seller: TEST_SELLER, amountMinor, proofHash, operation: 'reserve' }, { owner: 'operator:live' })
+  await stateStore.markRunStage(runId, 'reconciliation-required', { offerHash, operation: 'reserve' })
+  await stateStore.releaseBudget(runId, 'reconciliation-held')
+  const result = await resolveReconciliation({
+    runId,
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getEscrowUsdc: async () => ARC_TESTNET_USDC_ADDRESS, getReservation: async () => ({ status: 1, buyer: TEST_AGENT_WALLET, seller: TEST_SELLER, amount: BigInt(amountMinor), proofHash }) },
+    circle: {},
+  })
+  assert.equal(result.status, 'reconciled-confirmed')
+  const context = await getReconciliationContext(runId)
+  assert.equal(context.budgetHold.status, 'settled')
+  assert.equal(context.paymentIntent.status, 'reconciled-confirmed')
+  assert.equal(context.reservation.status, 'chain-confirmed')
+  const duplicate = await resolveReconciliation({ runId, arc: {}, circle: {} })
+  assert.equal(duplicate.status, 'already_resolved')
+}))
+
+test('P1 reconciliation resolve marks reverted and not-submitted from authoritative checks', async () => withEnv(healthyLiveEnv('resolve-reverted'), async () => {
+  const stateStore = require('../backend/lib/state-store')
+  async function seed(runId, idempotencyKey, extra = {}) {
+    const offerHash = deterministicOfferHash(DEMO_OFFERS[0])
+    await stateStore.claimIdempotency({ runId, idempotencyKey, offerId: DEMO_OFFERS[0].id, mode: 'live' })
+    await stateStore.reserveBudget({ runId, owner: 'operator:live', amountUsdc: 0.101, dailyBudgetUsdc: 1, budgetImpact: true })
+    await stateStore.claimPaymentIntent({ runId, idempotencyKey, offerId: DEMO_OFFERS[0].id, owner: 'operator:live', amountUsdc: 0.001, budgetImpact: false })
+    await stateStore.recordReservation({ runId, offerHash, status: 'reconciliation_required', escrow: TEST_ESCROW, usdc: ARC_TESTNET_USDC_ADDRESS, buyer: TEST_AGENT_WALLET, seller: TEST_SELLER, amountMinor: amountMinorUsdc(DEMO_OFFERS[0].depositUsdc).toString(), proofHash: `0x${'f'.repeat(64)}`, operation: 'reserve', ...extra }, { owner: 'operator:live' })
+    await stateStore.markRunStage(runId, 'reconciliation-required', { offerHash, operation: 'reserve', ...extra })
+    await stateStore.releaseBudget(runId, 'reconciliation-held')
+  }
+  await seed('run_resolve_reverted', 'idem_resolve_reverted', { txHash: `0x${'1'.repeat(64)}` })
+  const reverted = await resolveReconciliation({
+    runId: 'run_resolve_reverted',
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getEscrowUsdc: async () => ARC_TESTNET_USDC_ADDRESS, getReservation: async () => ({ status: 0 }), getTransactionReceipt: async () => ({ status: '0x0' }) },
+    circle: {},
+  })
+  assert.equal(reverted.outcome, 'reverted')
+  assert.equal((await getReconciliationContext('run_resolve_reverted')).budgetHold.status, 'released')
+
+  await seed('run_resolve_not_submitted', 'idem_resolve_not_submitted', { circleTransactionId: 'circle_not_submitted' })
+  const notSubmitted = await resolveReconciliation({
+    runId: 'run_resolve_not_submitted',
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getEscrowUsdc: async () => ARC_TESTNET_USDC_ADDRESS, getReservation: async () => ({ status: 0 }) },
+    circle: { circleTransactionStatus: async () => ({ normalized: { ok: true, data: { status: 'NOT_SUBMITTED' } } }) },
+  })
+  assert.equal(notSubmitted.outcome, 'not-submitted')
+  assert.equal((await getReconciliationContext('run_resolve_not_submitted')).paymentIntent.status, 'reconciled-not-submitted')
+}))
+
+test('P1 reconciliation resolve keeps ambiguous state and rejects wrong token', async () => withEnv(healthyLiveEnv('resolve-ambiguous'), async () => {
+  const stateStore = require('../backend/lib/state-store')
+  const offerHash = deterministicOfferHash(DEMO_OFFERS[0])
+  async function seed(runId, usdc = ARC_TESTNET_USDC_ADDRESS) {
+    await stateStore.claimIdempotency({ runId, idempotencyKey: `idem_${runId}`, offerId: DEMO_OFFERS[0].id, mode: 'live' })
+    await stateStore.reserveBudget({ runId, owner: 'operator:live', amountUsdc: 0.101, dailyBudgetUsdc: 1, budgetImpact: true })
+    await stateStore.recordReservation({ runId, offerHash, status: 'reconciliation_required', escrow: TEST_ESCROW, usdc, buyer: TEST_AGENT_WALLET, seller: TEST_SELLER, amountMinor: amountMinorUsdc(DEMO_OFFERS[0].depositUsdc).toString(), proofHash: `0x${'f'.repeat(64)}`, operation: 'reserve', txHash: `0x${'2'.repeat(64)}` }, { owner: 'operator:live' })
+    await stateStore.markRunStage(runId, 'reconciliation-required', { offerHash, operation: 'reserve', txHash: `0x${'2'.repeat(64)}` })
+    await stateStore.releaseBudget(runId, 'reconciliation-held')
+  }
+  await seed('run_resolve_ambiguous')
+  const ambiguous = await resolveReconciliation({
+    runId: 'run_resolve_ambiguous',
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getEscrowUsdc: async () => ARC_TESTNET_USDC_ADDRESS, getReservation: async () => ({ status: 0 }), getTransactionReceipt: async () => null },
+    circle: {},
+  })
+  assert.equal(ambiguous.status, 'still_ambiguous')
+  assert.equal((await getReconciliationContext('run_resolve_ambiguous')).budgetHold.status, 'reconciliation-held')
+
+  await seed('run_resolve_wrong_token', '0x3600000000000000000000000000000000000001')
+  await assert.rejects(() => resolveReconciliation({ runId: 'run_resolve_wrong_token', arc: {}, circle: {} }), /token mismatch/)
+  assert.equal((await getReconciliationContext('run_resolve_wrong_token')).budgetHold.status, 'reconciliation-held')
+}))
+
+test('P1 reconciliation resolve endpoint rejects client-declared outcomes', async () => withEnv(healthyLiveEnv('resolve-route'), async () => {
+  const express = require('../backend/node_modules/express')
+  const scout = require('../backend/routes/scout')
+  const app = express()
+  app.use(express.json())
+  app.use('/api/scout', scout)
+  const res = await request(app, { path: '/api/scout/reconciliations/run_any/resolve', method: 'POST', headers: { 'x-slabscout-operator-token': 'op' }, body: { outcome: 'confirmed' } })
+  assert.equal(res.status, 400)
 }))
 
 test('P0 unauthorized audit fallback redacts full audit details', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct' }, async () => {

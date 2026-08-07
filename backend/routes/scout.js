@@ -3,6 +3,7 @@ const { runScout } = require('../lib/scout-agent')
 const { listAudits } = require('../lib/audit-log')
 const { requireOperatorForSpend, tokenFromRequest, safeEqualString } = require('../lib/operator-auth')
 const stateStore = require('../lib/state-store')
+const { resolveReconciliation } = require('../lib/reconciliation')
 const { rateLimit } = require('../lib/rate-limit')
 
 router.post('/run', rateLimit({ windowMs: 60_000, max: 30 }), requireOperatorForSpend, async (req, res, next) => {
@@ -53,6 +54,21 @@ router.get('/reconciliations', async (req, res, next) => {
     assertOperatorToken(req)
     const unresolved = await stateStore.listUnresolvedReconciliations({ owner: 'operator:live' })
     res.json({ unresolved, count: unresolved.length })
+  } catch (error) {
+    next(error)
+  }
+})
+
+router.post('/reconciliations/:runId/resolve', async (req, res, next) => {
+  try {
+    assertOperatorToken(req)
+    const body = req.body || {}
+    if (body.outcome || body.status || body.confirmed || body.notSubmitted) {
+      const error = new Error('Client-submitted reconciliation outcomes are not accepted; Circle/Arc state is queried server-side')
+      error.statusCode = 400
+      throw error
+    }
+    res.json(await resolveReconciliation({ runId: req.params.runId }))
   } catch (error) {
     next(error)
   }

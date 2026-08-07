@@ -272,6 +272,81 @@ async function getBudgetHold(runId) {
   return withState((state) => state.budgetHolds[runId] || null)
 }
 
+async function getRun(runId) {
+  return withState((state) => state.runs[runId] || null)
+}
+
+async function getIdempotencyRunId(idempotencyKey) {
+  return withState((state) => state.idempotency[idempotencyKey] || null)
+}
+
+async function getReconciliationContext(runId) {
+  return withState((state) => {
+    const run = state.runs[runId] || null
+    const budgetHold = state.budgetHolds[runId] || null
+    const paymentIntent = Object.values(state.paymentIntents).find((intent) => intent.runId === runId) || null
+    const reservationEntry = Object.entries(state.reservations).find(([, reservation]) => reservation.runId === runId) || null
+    const reservation = reservationEntry ? { offerHash: reservationEntry[0], ...reservationEntry[1] } : null
+    const unresolved = Boolean((budgetHold && budgetHold.status === 'reconciliation-held') || (run && run.status === 'reconciliation-required'))
+    return { run, budgetHold, paymentIntent, reservation, unresolved }
+  })
+}
+
+function updateRunForResolution(state, runId, outcome, details, now) {
+  const run = state.runs[runId]
+  if (!run) return null
+  const runStatus = outcome === 'confirmed' ? 'chain-confirmed' : 'failed'
+  run.status = runStatus
+  run.reconciliation = { outcome, details, resolvedAt: now }
+  run.stages = [...(run.stages || []), { status: `reconciliation-${outcome}`, at: now, ...details }]
+  return run
+}
+
+async function resolveReconciliationState({ runId, outcome, details = {} }) {
+  return withState((state) => {
+    const now = new Date().toISOString()
+    const run = state.runs[runId] || null
+    const budgetHold = state.budgetHolds[runId] || null
+    const paymentIntentKey = Object.keys(state.paymentIntents).find((key) => state.paymentIntents[key].runId === runId)
+    const reservationKey = Object.keys(state.reservations).find((key) => state.reservations[key].runId === runId)
+    const unresolved = Boolean((budgetHold && budgetHold.status === 'reconciliation-held') || (run && run.status === 'reconciliation-required'))
+    if (!run) {
+      const error = new Error('run not found')
+      error.statusCode = 404
+      throw error
+    }
+    if (!unresolved) return { runId, status: 'already_resolved', unresolved: false, outcome: run.status, resolvedAt: run.reconciliation?.resolvedAt || null }
+    if (outcome === 'ambiguous') {
+      run.stages = [...(run.stages || []), { status: 'reconciliation-ambiguous', at: now, ...details }]
+      run.reconciliation = { outcome, details, checkedAt: now }
+      return { runId, status: 'still_ambiguous', unresolved: true, outcome, checkedAt: now }
+    }
+    if (!['confirmed', 'reverted', 'not-submitted'].includes(outcome)) {
+      const error = new Error('unsupported reconciliation outcome')
+      error.statusCode = 400
+      throw error
+    }
+    updateRunForResolution(state, runId, outcome, details, now)
+    if (paymentIntentKey) {
+      state.paymentIntents[paymentIntentKey] = { ...state.paymentIntents[paymentIntentKey], status: `reconciled-${outcome}`, reconciliation: { outcome, details, resolvedAt: now }, updatedAt: now }
+    }
+    if (reservationKey) {
+      state.reservations[reservationKey] = {
+        ...state.reservations[reservationKey],
+        status: outcome === 'confirmed' ? 'chain-confirmed' : `reconciled-${outcome}`,
+        chainConfirmed: outcome === 'confirmed',
+        reconciliation: { outcome, details, resolvedAt: now },
+        savedAt: now,
+      }
+    }
+    if (budgetHold) {
+      budgetHold.status = outcome === 'confirmed' ? 'settled' : 'released'
+      budgetHold.reconciliation = { outcome, details, resolvedAt: now }
+    }
+    return { runId, status: `reconciled-${outcome}`, unresolved: false, outcome, resolvedAt: now }
+  })
+}
+
 async function listUnresolvedReconciliations({ owner } = {}) {
   return withState((state) => {
     const holds = Object.values(state.budgetHolds)
@@ -313,6 +388,10 @@ module.exports = {
   recordAudit,
   listAudits,
   getBudgetHold,
+  getRun,
+  getIdempotencyRunId,
+  getReconciliationContext,
+  resolveReconciliationState,
   listUnresolvedReconciliations,
   resetStateForTests,
   activeDailySpend,

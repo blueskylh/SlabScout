@@ -1,7 +1,7 @@
 const routerModule = require('express').Router
 const { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS } = require('../../packages/shared')
 const { missingLivePaymentEnv, missingLiveEscrowEnv } = require('../lib/circle-adapters')
-const { persistenceBackend, persistentStoreConfigured, stateFile, stateFileWritable } = require('../lib/state-store')
+const { persistenceBackend, persistentStoreConfigured, stateFile, stateFileWritable, listUnresolvedReconciliations } = require('../lib/state-store')
 const circleCli = require('../lib/circle-cli')
 const arcRpc = require('../lib/arc-rpc')
 const { tokenFromRequest, safeEqualString } = require('../lib/operator-auth')
@@ -30,8 +30,10 @@ function liveConfigSummary() {
   if (!process.env.RENAISS_API_SECRET) required.push('RENAISS_API_SECRET')
   if (!signingSecretConfigured()) required.push('MARKET_PROOF_SIGNING_SECRET(non-default)')
   if (!policySigningSecretConfigured()) required.push('POLICY_PROOF_SIGNING_SECRET(non-default)')
+  if (process.env.CIRCLE_MODE !== 'live') required.push('CIRCLE_MODE=live')
+  if (process.env.ARC_EXECUTION_MODE !== 'live') required.push('ARC_EXECUTION_MODE=live')
   const liveMissing = [...new Set([...paymentMissing, ...escrowMissing, ...required])]
-  return { paymentMissing, escrowMissing, liveMissing, liveConfigComplete: liveMissing.length === 0 && process.env.CIRCLE_MODE === 'live' && process.env.ARC_EXECUTION_MODE === 'live' }
+  return { paymentMissing, escrowMissing, liveMissing, liveConfigComplete: liveMissing.length === 0 }
 }
 
 function assertReadinessOperator(req) {
@@ -71,23 +73,20 @@ function parseGatewayBalanceUsdc(normalized) {
 }
 
 function walletSessionOk(status) {
-  const normalized = status?.normalized || {}
-  const data = normalized.data || normalized.envelope?.data || {}
-  return Boolean(normalized.ok === true && (
-    data.session === true ||
-    data.authenticated === true ||
-    data.loggedIn === true ||
-    data.walletAddress ||
-    data.address ||
-    data.wallet
-  ))
+  return circleCli.circleTestnetSessionOk(status)
 }
 
-async function collectLiveReadiness({ circle = circleCli, arc = arcRpc } = {}) {
+function walletControlsAddress(status, walletAddress) {
+  return circleCli.circleWalletControlsAddress(status, walletAddress)
+}
+
+async function collectLiveReadiness({ circle = circleCli, arc = arcRpc, state = { listUnresolvedReconciliations } } = {}) {
   const walletAddress = process.env.CIRCLE_AGENT_WALLET_ADDRESS || process.env.AGENT_WALLET_ADDRESS || null
   const rpcUrl = process.env.ARC_RPC_URL || arc.RPC_URL
   const escrow = process.env.RESERVATION_ESCROW_ADDRESS || null
   const checks = []
+  const config = liveConfigSummary()
+  checks.push({ label: 'live-config', ok: config.liveConfigComplete, value: { liveMissing: config.liveMissing }, error: config.liveConfigComplete ? null : `Missing live config: ${config.liveMissing.join(', ')}` })
   checks.push({ label: 'state-file-writable', ok: Boolean(stateFile() && stateFileWritable()), value: stateFile() || null })
   checks.push({ label: 'wallet-address-configured', ok: Boolean(walletAddress), value: walletAddress })
   checks.push(await checkReadOnly('circle-cli-version', async () => {
@@ -96,7 +95,9 @@ async function collectLiveReadiness({ circle = circleCli, arc = arcRpc } = {}) {
   }))
   checks.push(await checkReadOnly('circle-cli-status', async () => {
     const status = await circle.circleWalletStatus()
-    return walletSessionOk(status) ? { ok: true, session: true } : { ok: false, error: 'Circle CLI wallet session is not authenticated', normalized: status.normalized || null }
+    if (!walletSessionOk(status)) return { ok: false, error: 'Circle CLI testnet tokenStatus is not VALID', normalized: status.normalized || null }
+    if (walletAddress && !walletControlsAddress(status, walletAddress)) return { ok: false, error: 'Circle CLI session does not control configured wallet', normalized: status.normalized || null }
+    return { ok: true, session: true, testnet: status.normalized?.data?.testnet || null }
   }))
   checks.push(await checkReadOnly('circle-gateway-balance', async () => {
     if (!walletAddress) throw new Error('wallet address missing')
@@ -110,6 +111,10 @@ async function collectLiveReadiness({ circle = circleCli, arc = arcRpc } = {}) {
     const code = await arc.getCode({ address: escrow, rpcUrl })
     if (!code || code === '0x') return { ok: false, error: 'escrow bytecode missing', address: escrow }
     return { ok: true, address: escrow, bytecodeBytes: Math.max(0, (code.length - 2) / 2) }
+  }))
+  checks.push(await checkReadOnly('unresolved-reconciliation', async () => {
+    const unresolved = await state.listUnresolvedReconciliations({ owner: 'operator:live' })
+    return unresolved.length === 0 ? { ok: true, count: 0 } : { ok: false, count: unresolved.length, unresolved, error: 'Unresolved reconciliation blocks live execution' }
   }))
   return { readinessLevel: 'read-only-live-check', ok: checks.every((check) => check.ok), checks, checkedAt: new Date().toISOString() }
 }
@@ -174,6 +179,6 @@ function createStatusRouter({ circle = circleCli, arc = arcRpc } = {}) {
 
 const defaultRouter = createStatusRouter()
 defaultRouter.createStatusRouter = createStatusRouter
-defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, statusPayload }
+defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, walletControlsAddress, statusPayload }
 
 module.exports = defaultRouter

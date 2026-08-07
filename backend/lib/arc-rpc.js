@@ -4,9 +4,12 @@ const { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS } = require('../../packag
 const RPC_URL = 'https://rpc.testnet.arc.network'
 const ERC20_ABI = parseAbi([
   'function allowance(address owner,address spender) view returns (uint256)',
+  'function balanceOf(address owner) view returns (uint256)',
 ])
 const ESCROW_ABI = parseAbi([
   'function reservations(bytes32 offerId) view returns (address buyer,address seller,uint256 amount,bytes32 proofHash,uint64 refundAfter,uint8 status)',
+  'function usdc() view returns (address)',
+  'function maxReservationAmount() view returns (uint256)',
   'event Reserved(bytes32 indexed offerId,address indexed buyer,address indexed seller,uint256 amount,bytes32 proofHash,uint64 refundAfter)',
 ])
 
@@ -38,6 +41,12 @@ async function getAllowance({ owner, spender, token = ARC_TESTNET_USDC_ADDRESS, 
   return decodeFunctionResult({ abi: ERC20_ABI, functionName: 'allowance', data: result })
 }
 
+async function getTokenBalance({ owner, token = ARC_TESTNET_USDC_ADDRESS, rpcUrl }) {
+  const data = encodeFunctionData({ abi: ERC20_ABI, functionName: 'balanceOf', args: [owner] })
+  const result = await ethCall({ to: token, data, rpcUrl })
+  return decodeFunctionResult({ abi: ERC20_ABI, functionName: 'balanceOf', data: result })
+}
+
 async function getReservation({ escrow, offerHash, rpcUrl }) {
   const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: 'reservations', args: [offerHash] })
   const result = await ethCall({ to: escrow, data, rpcUrl })
@@ -45,8 +54,29 @@ async function getReservation({ escrow, offerHash, rpcUrl }) {
   return { buyer: decoded[0], seller: decoded[1], amount: decoded[2], proofHash: decoded[3], refundAfter: decoded[4], status: Number(decoded[5]) }
 }
 
+async function getEscrowUsdc({ escrow, rpcUrl }) {
+  const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: 'usdc' })
+  const result = await ethCall({ to: escrow, data, rpcUrl })
+  return decodeFunctionResult({ abi: ESCROW_ABI, functionName: 'usdc', data: result })
+}
+
+async function getEscrowMaxReservationAmount({ escrow, rpcUrl }) {
+  const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: 'maxReservationAmount' })
+  const result = await ethCall({ to: escrow, data, rpcUrl })
+  return decodeFunctionResult({ abi: ESCROW_ABI, functionName: 'maxReservationAmount', data: result })
+}
+
 async function getCode({ address, rpcUrl }) {
   return rpc('eth_getCode', [address, 'latest'], { rpcUrl })
+}
+
+async function getNativeBalance({ address, rpcUrl }) {
+  const result = await rpc('eth_getBalance', [address, 'latest'], { rpcUrl })
+  return BigInt(result)
+}
+
+async function getTransactionReceipt(txHash, { rpcUrl } = {}) {
+  return rpc('eth_getTransactionReceipt', [txHash], { rpcUrl })
 }
 
 async function waitForReceipt(txHash, { rpcUrl, timeoutMs = 120_000, intervalMs = 3_000 } = {}) {
@@ -84,8 +114,13 @@ module.exports = {
   RPC_URL,
   assertArcChain,
   getAllowance,
+  getTokenBalance,
   getReservation,
+  getEscrowUsdc,
+  getEscrowMaxReservationAmount,
   getCode,
+  getNativeBalance,
+  getTransactionReceipt,
   waitForReceipt,
   validateReservedEvent,
 }
