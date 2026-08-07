@@ -81,9 +81,9 @@ Replay payment 使用：
 - `replayAccepted = true`
 - 无 tx hash / explorer URL
 
-Live payment 已接入 Circle CLI buyer flow 与 x402 seller endpoint，但默认仍 fail-closed：没有 operator token、可写 state file、Circle CLI `0.0.6` testnet `tokenStatus=VALID`、Agent Wallet、seller address、service URL 或可信 receipt/tx 时，只返回 `live-unavailable/*` 或 `reconciliation_required`，不会显示成功。
+Live payment 已接入 Circle CLI buyer flow 与 x402 seller endpoint，但默认仍 fail-closed：没有 operator token、可写 state file、Circle CLI `0.0.6` testnet `tokenStatus=VALID`、`circle wallet list` 中的钱包归属、Agent Wallet、seller address、service URL 或可信 receipt/tx 时，只返回 `live-unavailable/*` 或 `reconciliation_required`，不会显示成功。
 
-在 `claimPaymentIntent` / `circle services pay` 之前，后端 `runScout()` 会强制执行 `LiveSpendPreflight`：Arc chainId、escrow bytecode、`escrow.usdc()`、`maxReservationAmount()`、`reservations(offerHash)`、Agent Wallet 链上 USDC 余额、gas/paymaster 信号、Circle CLI testnet session 和钱包控制权都必须通过。Gateway balance 只用于 x402/Gateway readiness，不能替代 escrow deposit 的链上 USDC 余额。
+后端强制拆分两个 preflight：`PaymentPreflight` 只在 `claimPaymentIntent` / `circle services pay` 前运行，检查 Circle live mode、testnet session、wallet list ownership、payment cap 和 unresolved services-pay reconciliation；`EscrowExecutionPreflight` 在任何真实 approve/reserve 前运行，检查 Arc chainId、escrow bytecode、`escrow.usdc()`、`maxReservationAmount()`、`reservations(offerHash)`、Agent Wallet 链上 USDC 余额、allowance、`circle wallet execute --estimate` 或保守 native-balance fallback，以及 unresolved approve/reserve reconciliation。Gateway balance 只用于 x402/Gateway readiness，不能替代 escrow deposit 的链上 USDC 余额。
 
 可信 payment receipt verifier 绑定：runId、idempotencyKey、offerId、targetItemId、targetHref、payer、payee/service/payeeAddress、Arc Testnet、chainId、USDC address、amount、Circle payment ID 或 tx hash、paidAt、providerStatus，并拒绝 replay / 过期 / 金额或资产不一致。x402 seller middleware 仅接受 `eip155:5042002`，且 proof endpoint 会重新拉取 Renaiss 数据，不签客户端提交的数据。
 

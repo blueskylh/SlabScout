@@ -76,8 +76,26 @@ function walletSessionOk(status) {
   return circleCli.circleTestnetSessionOk(status)
 }
 
-function walletControlsAddress(status, walletAddress) {
-  return circleCli.circleWalletControlsAddress(status, walletAddress)
+function walletControlsAddress(walletList, walletAddress) {
+  return circleCli.circleWalletListHasAddress(walletList, walletAddress)
+}
+
+async function estimateOrNativeReadiness({ circle, arc, walletAddress, escrow, rpcUrl }) {
+  if (!walletAddress || !escrow) return { ok: false, error: 'wallet address or escrow missing before estimate' }
+  const estimate = await circle.circleWalletExecuteEstimate({
+    signature: 'approve(address,uint256)',
+    params: [escrow, '1'],
+    contract: process.env.ARC_USDC_ADDRESS || ARC_TESTNET_USDC_ADDRESS,
+    address: walletAddress,
+    chain: 'ARC-TESTNET',
+    rpcUrl,
+  })
+  if (estimate.normalized?.canExecute === true) return { ok: true, source: 'circle-wallet-execute-estimate', estimate: estimate.normalized.data }
+  if (estimate.normalized?.insufficient === true) return { ok: false, source: 'circle-wallet-execute-estimate', estimate: estimate.normalized.data, error: 'Circle wallet execute --estimate reports the operation is not executable' }
+  const nativeBalanceWei = arc.getNativeBalance ? (await arc.getNativeBalance({ address: walletAddress, rpcUrl })).toString() : '0'
+  return BigInt(nativeBalanceWei) > 0n
+    ? { ok: true, source: 'native-balance-fallback', nativeBalanceWei, reason: 'estimate did not expose a deterministic canExecute flag' }
+    : { ok: false, source: 'native-balance-fallback', nativeBalanceWei, estimate: estimate.normalized?.data || null, error: 'Circle estimate was not decisive and native gas balance is zero' }
 }
 
 async function collectLiveReadiness({ circle = circleCli, arc = arcRpc, state = { listUnresolvedReconciliations } } = {}) {
@@ -96,8 +114,12 @@ async function collectLiveReadiness({ circle = circleCli, arc = arcRpc, state = 
   checks.push(await checkReadOnly('circle-cli-status', async () => {
     const status = await circle.circleWalletStatus()
     if (!walletSessionOk(status)) return { ok: false, error: 'Circle CLI testnet tokenStatus is not VALID', normalized: status.normalized || null }
-    if (walletAddress && !walletControlsAddress(status, walletAddress)) return { ok: false, error: 'Circle CLI session does not control configured wallet', normalized: status.normalized || null }
     return { ok: true, session: true, testnet: status.normalized?.data?.testnet || null }
+  }))
+  checks.push(await checkReadOnly('circle-wallet-list-ownership', async () => {
+    if (!walletAddress) throw new Error('wallet address missing')
+    const walletList = await circle.circleWalletList({ chain: 'ARC-TESTNET', type: 'agent' })
+    return walletControlsAddress(walletList, walletAddress) ? { ok: true, walletAddress } : { ok: false, walletAddress, error: 'circle wallet list does not contain configured wallet' }
   }))
   checks.push(await checkReadOnly('circle-gateway-balance', async () => {
     if (!walletAddress) throw new Error('wallet address missing')
@@ -112,6 +134,7 @@ async function collectLiveReadiness({ circle = circleCli, arc = arcRpc, state = 
     if (!code || code === '0x') return { ok: false, error: 'escrow bytecode missing', address: escrow }
     return { ok: true, address: escrow, bytecodeBytes: Math.max(0, (code.length - 2) / 2) }
   }))
+  checks.push(await checkReadOnly('wallet-execute-estimate', async () => estimateOrNativeReadiness({ circle, arc, walletAddress, escrow, rpcUrl })))
   checks.push(await checkReadOnly('unresolved-reconciliation', async () => {
     const unresolved = await state.listUnresolvedReconciliations({ owner: 'operator:live' })
     return unresolved.length === 0 ? { ok: true, count: 0 } : { ok: false, count: unresolved.length, unresolved, error: 'Unresolved reconciliation blocks live execution' }
@@ -179,6 +202,6 @@ function createStatusRouter({ circle = circleCli, arc = arcRpc } = {}) {
 
 const defaultRouter = createStatusRouter()
 defaultRouter.createStatusRouter = createStatusRouter
-defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, walletControlsAddress, statusPayload }
+defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, walletControlsAddress, estimateOrNativeReadiness, statusPayload }
 
 module.exports = defaultRouter

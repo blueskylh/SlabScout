@@ -10,6 +10,7 @@ const DEFAULT_STATE = Object.freeze({
   proofs: {},
   reservations: {},
   budgetHolds: {},
+  budgetLineItems: {},
   audit: [],
 })
 
@@ -87,7 +88,13 @@ function sameDay(a, b = new Date()) {
   return da.toISOString().slice(0, 10) === b.toISOString().slice(0, 10)
 }
 
+function lineItemCountsForBudget(item) {
+  return item?.budgetImpact === true && ['held', 'spent', 'ambiguous', 'locked'].includes(item.status)
+}
+
 function activeDailySpend(state, owner, now = new Date()) {
+  const lineItems = Object.values(state.budgetLineItems || {}).filter((item) => item.owner === owner && lineItemCountsForBudget(item) && sameDay(item.createdAt || item.updatedAt, now))
+  if (lineItems.length > 0) return lineItems.reduce((sum, item) => sum + Number(item.amountUsdc || 0), 0)
   const held = Object.values(state.budgetHolds)
     .filter((hold) => hold.owner === owner && ['held', 'reconciliation-held'].includes(hold.status) && sameDay(hold.createdAt, now))
     .reduce((sum, hold) => sum + Number(hold.amountUsdc || 0), 0)
@@ -98,6 +105,30 @@ function activeDailySpend(state, owner, now = new Date()) {
     .filter((reservation) => reservation.owner === owner && reservation.budgetImpact === true && sameDay(reservation.savedAt, now))
     .reduce((sum, reservation) => sum + Number(reservation.amountUsdc || 0), 0)
   return held + settledPayments + settledReservations
+}
+
+function budgetLineKey(runId, operation) {
+  return `${runId}:${operation}`
+}
+
+function upsertBudgetLineItemInState(state, { runId, owner, operation, amountUsdc, status = 'held', externalId = null, budgetImpact = true, meta = {} }) {
+  const now = new Date().toISOString()
+  const key = budgetLineKey(runId, operation)
+  const existing = state.budgetLineItems[key] || {}
+  state.budgetLineItems[key] = {
+    ...existing,
+    runId,
+    owner: owner || existing.owner,
+    operation,
+    amountUsdc: Number(amountUsdc ?? existing.amountUsdc ?? 0),
+    status,
+    externalId: externalId ?? existing.externalId ?? null,
+    budgetImpact,
+    meta: { ...(existing.meta || {}), ...meta },
+    createdAt: existing.createdAt || now,
+    updatedAt: now,
+  }
+  return state.budgetLineItems[key]
 }
 
 async function claimIdempotency({ runId, idempotencyKey, offerId, mode }) {
@@ -163,8 +194,57 @@ async function reserveBudget({ runId, owner, amountUsdc, dailyBudgetUsdc, budget
 async function releaseBudget(runId, status = 'released') {
   return withState((state) => {
     if (state.budgetHolds[runId]) state.budgetHolds[runId].status = status
+    const mapped = status === 'reconciliation-held' ? 'ambiguous' : status === 'settled' ? 'spent' : 'released'
+    for (const item of Object.values(state.budgetLineItems || {}).filter((line) => line.runId === runId && line.status === 'held')) item.status = mapped
     return state.budgetHolds[runId] || null
   })
+}
+
+async function reserveBudgetLineItem({ runId, owner, operation, amountUsdc, dailyBudgetUsdc, externalId = null, budgetImpact = true, meta = {} }) {
+  if (!budgetImpact || Number(amountUsdc) <= 0) return { held: false, amountUsdc: 0 }
+  return withState((state) => {
+    const current = activeDailySpend(state, owner, new Date())
+    const existing = state.budgetLineItems[budgetLineKey(runId, operation)]
+    const delta = existing && lineItemCountsForBudget(existing) ? 0 : Number(amountUsdc)
+    if (current + delta > Number(dailyBudgetUsdc)) {
+      const error = new Error(`Daily budget exceeded: ${current + delta} > ${dailyBudgetUsdc}`)
+      error.statusCode = 409
+      throw error
+    }
+    return upsertBudgetLineItemInState(state, { runId, owner, operation, amountUsdc, status: 'held', externalId, budgetImpact, meta })
+  })
+}
+
+async function updateBudgetLineItem({ runId, operation, status, externalId = null, meta = {} }) {
+  return withState((state) => {
+    const key = budgetLineKey(runId, operation)
+    const existing = state.budgetLineItems[key]
+    if (!existing) return null
+    return upsertBudgetLineItemInState(state, { ...existing, status, externalId: externalId ?? existing.externalId, meta: { ...(existing.meta || {}), ...meta } })
+  })
+}
+
+async function listBudgetLineItems({ runId, owner } = {}) {
+  return withState((state) => Object.values(state.budgetLineItems || {}).filter((item) => (!runId || item.runId === runId) && (!owner || item.owner === owner)))
+}
+
+function summarizeBudgetLineItems(items = []) {
+  return items.reduce((summary, item) => {
+    const amount = Number(item.amountUsdc || 0)
+    if (item.status === 'spent') summary.spentUsdc += amount
+    if (item.status === 'locked') summary.lockedDepositUsdc += amount
+    if (item.status === 'held') summary.heldUsdc += amount
+    if (item.status === 'ambiguous') summary.ambiguousUsdc += amount
+    if (item.status === 'released') summary.releasedUsdc += amount
+    if (item.operation === 'reserve' && item.status === 'spent') summary.historicalDepositSpendUsdc += amount
+    if (item.operation === 'reserve' && item.status === 'locked') summary.currentLockedDepositUsdc += amount
+    summary.committedUsdc = summary.spentUsdc + summary.lockedDepositUsdc + summary.heldUsdc + summary.ambiguousUsdc
+    return summary
+  }, { spentUsdc: 0, lockedDepositUsdc: 0, heldUsdc: 0, ambiguousUsdc: 0, releasedUsdc: 0, historicalDepositSpendUsdc: 0, currentLockedDepositUsdc: 0, committedUsdc: 0 })
+}
+
+async function budgetSummary({ runId, owner } = {}) {
+  return summarizeBudgetLineItems(await listBudgetLineItems({ runId, owner }))
 }
 
 async function claimPaymentIntent({ runId, idempotencyKey, offerId, owner, amountUsdc, budgetImpact = false }) {
@@ -269,7 +349,16 @@ async function listAudits({ redacted = true } = {}) {
 }
 
 async function getBudgetHold(runId) {
-  return withState((state) => state.budgetHolds[runId] || null)
+  return withState((state) => {
+    if (state.budgetHolds[runId]) return state.budgetHolds[runId]
+    const items = Object.values(state.budgetLineItems || {}).filter((item) => item.runId === runId)
+    if (items.length === 0) return null
+    const status = items.some((item) => item.status === 'ambiguous') ? 'reconciliation-held'
+      : items.some((item) => item.status === 'held') ? 'held'
+        : items.some((item) => ['spent', 'locked'].includes(item.status)) ? 'settled'
+          : 'released'
+    return { runId, owner: items[0].owner, amountUsdc: items.reduce((sum, item) => sum + Number(item.amountUsdc || 0), 0), status, lineItems: items }
+  })
 }
 
 async function getRun(runId) {
@@ -287,78 +376,91 @@ async function getReconciliationContext(runId) {
     const paymentIntent = Object.values(state.paymentIntents).find((intent) => intent.runId === runId) || null
     const reservationEntry = Object.entries(state.reservations).find(([, reservation]) => reservation.runId === runId) || null
     const reservation = reservationEntry ? { offerHash: reservationEntry[0], ...reservationEntry[1] } : null
-    const unresolved = Boolean((budgetHold && budgetHold.status === 'reconciliation-held') || (run && run.status === 'reconciliation-required'))
-    return { run, budgetHold, paymentIntent, reservation, unresolved }
+    const budgetLineItems = Object.values(state.budgetLineItems || {}).filter((item) => item.runId === runId)
+    const unresolved = Boolean((budgetHold && budgetHold.status === 'reconciliation-held') || budgetLineItems.some((item) => item.status === 'ambiguous') || (run && run.status === 'reconciliation-required'))
+    return { run, budgetHold, paymentIntent, reservation, budgetLineItems, budgetSummary: summarizeBudgetLineItems(budgetLineItems), unresolved }
   })
 }
 
-function updateRunForResolution(state, runId, outcome, details, now) {
-  const run = state.runs[runId]
-  if (!run) return null
-  const runStatus = outcome === 'confirmed' ? 'chain-confirmed' : 'failed'
-  run.status = runStatus
-  run.reconciliation = { outcome, details, resolvedAt: now }
-  run.stages = [...(run.stages || []), { status: `reconciliation-${outcome}`, at: now, ...details }]
-  return run
+function operationFromDetails(details = {}) {
+  return details.operation || details.submission?.operation || null
 }
 
-async function resolveReconciliationState({ runId, outcome, details = {} }) {
+async function resolveOperationReconciliationState({ runId, operation, outcome, details = {} }) {
   return withState((state) => {
     const now = new Date().toISOString()
     const run = state.runs[runId] || null
     const budgetHold = state.budgetHolds[runId] || null
     const paymentIntentKey = Object.keys(state.paymentIntents).find((key) => state.paymentIntents[key].runId === runId)
     const reservationKey = Object.keys(state.reservations).find((key) => state.reservations[key].runId === runId)
-    const unresolved = Boolean((budgetHold && budgetHold.status === 'reconciliation-held') || (run && run.status === 'reconciliation-required'))
+    const budgetLine = state.budgetLineItems[budgetLineKey(runId, operation)] || null
+    const unresolved = Boolean((budgetHold && budgetHold.status === 'reconciliation-held') || (budgetLine && budgetLine.status === 'ambiguous') || (run && run.status === 'reconciliation-required'))
     if (!run) {
       const error = new Error('run not found')
       error.statusCode = 404
       throw error
     }
-    if (!unresolved) return { runId, status: 'already_resolved', unresolved: false, outcome: run.status, resolvedAt: run.reconciliation?.resolvedAt || null }
-    if (outcome === 'ambiguous') {
-      run.stages = [...(run.stages || []), { status: 'reconciliation-ambiguous', at: now, ...details }]
-      run.reconciliation = { outcome, details, checkedAt: now }
-      return { runId, status: 'still_ambiguous', unresolved: true, outcome, checkedAt: now }
-    }
-    if (!['confirmed', 'reverted', 'not-submitted'].includes(outcome)) {
+    if (!unresolved) return { runId, operation, status: 'already_resolved', unresolved: false, outcome: run.status, resolvedAt: run.reconciliation?.resolvedAt || null }
+    run.reconciliation = { ...(run.reconciliation || {}), [operation]: { outcome, details, checkedAt: now } }
+    run.stages = [...(run.stages || []), { status: `reconciliation-${operation}-${outcome}`, at: now, ...details }]
+
+    if (!['confirmed', 'ambiguous', 'reverted', 'not-submitted', 'released', 'refunded'].includes(outcome)) {
       const error = new Error('unsupported reconciliation outcome')
       error.statusCode = 400
       throw error
     }
-    updateRunForResolution(state, runId, outcome, details, now)
-    if (paymentIntentKey) {
-      state.paymentIntents[paymentIntentKey] = { ...state.paymentIntents[paymentIntentKey], status: `reconciled-${outcome}`, reconciliation: { outcome, details, resolvedAt: now }, updatedAt: now }
+
+    if (operation === 'services-pay') {
+      if (paymentIntentKey && outcome !== 'ambiguous') state.paymentIntents[paymentIntentKey] = { ...state.paymentIntents[paymentIntentKey], status: `reconciled-${outcome}`, reconciliation: { outcome, details, resolvedAt: now }, updatedAt: now }
+      if (budgetLine) budgetLine.status = outcome === 'confirmed' ? 'spent' : outcome === 'ambiguous' ? 'ambiguous' : 'released'
+      run.status = outcome === 'confirmed' ? 'payment-confirmed' : outcome === 'ambiguous' ? 'reconciliation-required' : 'payment-not-submitted'
+    } else if (operation === 'approve') {
+      if (reservationKey) state.reservations[reservationKey] = { ...state.reservations[reservationKey], approveStatus: outcome, status: outcome === 'confirmed' ? 'approve-confirmed' : `approve-${outcome}`, chainConfirmed: false, reconciliation: { outcome, details, resolvedAt: now }, savedAt: now }
+      run.status = outcome === 'ambiguous' ? 'reconciliation-required' : `approve-${outcome}`
+    } else if (operation === 'reserve') {
+      if (reservationKey) state.reservations[reservationKey] = { ...state.reservations[reservationKey], reserveStatus: outcome, status: outcome === 'confirmed' ? 'chain-confirmed' : outcome, chainConfirmed: outcome === 'confirmed', reconciliation: { outcome, details, resolvedAt: now }, savedAt: now }
+      if (budgetLine) budgetLine.status = outcome === 'confirmed' ? 'spent' : outcome === 'ambiguous' ? 'ambiguous' : 'released'
+      run.status = outcome === 'confirmed' ? 'chain-confirmed' : outcome === 'ambiguous' ? 'reconciliation-required' : `reserve-${outcome}`
     }
-    if (reservationKey) {
-      state.reservations[reservationKey] = {
-        ...state.reservations[reservationKey],
-        status: outcome === 'confirmed' ? 'chain-confirmed' : `reconciled-${outcome}`,
-        chainConfirmed: outcome === 'confirmed',
-        reconciliation: { outcome, details, resolvedAt: now },
-        savedAt: now,
-      }
-    }
-    if (budgetHold) {
-      budgetHold.status = outcome === 'confirmed' ? 'settled' : 'released'
-      budgetHold.reconciliation = { outcome, details, resolvedAt: now }
-    }
-    return { runId, status: `reconciled-${outcome}`, unresolved: false, outcome, resolvedAt: now }
+
+    if (budgetHold && outcome !== 'ambiguous') budgetHold.status = outcome === 'confirmed' && operation === 'reserve' ? 'settled' : 'released'
+    if (budgetHold && outcome === 'ambiguous') budgetHold.status = 'reconciliation-held'
+    return { runId, operation, status: outcome === 'ambiguous' ? 'still_ambiguous' : `reconciled-${operation}-${outcome}`, unresolved: outcome === 'ambiguous', outcome, resolvedAt: outcome === 'ambiguous' ? null : now, checkedAt: now }
   })
 }
 
-async function listUnresolvedReconciliations({ owner } = {}) {
+async function resolveReconciliationState({ runId, outcome, details = {} }) {
+  return resolveOperationReconciliationState({ runId, operation: operationFromDetails(details) || 'reserve', outcome, details })
+}
+
+async function listUnresolvedReconciliations({ owner, operations } = {}) {
   return withState((state) => {
+    const opSet = operations ? new Set(operations) : null
+    const lineItems = Object.values(state.budgetLineItems || {})
+      .filter((item) => item.status === 'ambiguous' && (!owner || item.owner === owner) && (!opSet || opSet.has(item.operation)))
+      .map((item) => {
+        const run = state.runs[item.runId] || {}
+        return { runId: item.runId, owner: item.owner, operation: item.operation, amountUsdc: item.amountUsdc, status: 'reconciliation-held', lineStatus: item.status, externalId: item.externalId || null, createdAt: item.createdAt, runStatus: run.status || null, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage: (run.stages || []).slice(-1)[0] || null }
+      })
     const holds = Object.values(state.budgetHolds)
       .filter((hold) => hold.status === 'reconciliation-held' && (!owner || hold.owner === owner))
+      .filter((hold) => !lineItems.some((item) => item.runId === hold.runId))
       .map((hold) => {
         const run = state.runs[hold.runId] || {}
-        return { runId: hold.runId, owner: hold.owner, amountUsdc: hold.amountUsdc, status: hold.status, createdAt: hold.createdAt, runStatus: run.status || null, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage: (run.stages || []).slice(-1)[0] || null }
+        const stage = (run.stages || []).slice(-1)[0] || null
+        const operation = stage?.operation || null
+        return { runId: hold.runId, owner: hold.owner, operation, amountUsdc: hold.amountUsdc, status: hold.status, createdAt: hold.createdAt, runStatus: run.status || null, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage }
       })
+      .filter((item) => !opSet || !item.operation || opSet.has(item.operation))
     const runs = Object.values(state.runs)
-      .filter((run) => run.status === 'reconciliation-required' && !holds.some((hold) => hold.runId === run.runId))
-      .map((run) => ({ runId: run.runId, owner: null, amountUsdc: 0, status: 'reconciliation-held', createdAt: run.startedAt || run.savedAt || null, runStatus: run.status, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage: (run.stages || []).slice(-1)[0] || null }))
-    return [...holds, ...runs]
+      .filter((run) => run.status === 'reconciliation-required' && !holds.some((hold) => hold.runId === run.runId) && !lineItems.some((item) => item.runId === run.runId))
+      .map((run) => {
+        const stage = (run.stages || []).slice(-1)[0] || null
+        const operation = stage?.operation || null
+        return { runId: run.runId, owner: null, operation, amountUsdc: 0, status: 'reconciliation-held', createdAt: run.startedAt || run.savedAt || null, runStatus: run.status, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage }
+      })
+      .filter((item) => !opSet || !item.operation || opSet.has(item.operation))
+    return [...lineItems, ...holds, ...runs]
   })
 }
 
@@ -379,6 +481,10 @@ module.exports = {
   saveRunResult,
   reserveBudget,
   releaseBudget,
+  reserveBudgetLineItem,
+  updateBudgetLineItem,
+  listBudgetLineItems,
+  budgetSummary,
   claimPaymentIntent,
   updatePaymentIntent,
   recordPayment,
@@ -391,8 +497,10 @@ module.exports = {
   getRun,
   getIdempotencyRunId,
   getReconciliationContext,
+  resolveOperationReconciliationState,
   resolveReconciliationState,
   listUnresolvedReconciliations,
   resetStateForTests,
   activeDailySpend,
+  summarizeBudgetLineItems,
 }

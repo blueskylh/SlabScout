@@ -1,6 +1,9 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const crypto = require('node:crypto')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 
 const {
   ARC_TESTNET_CHAIN_ID,
@@ -66,7 +69,18 @@ function replayPayment(runId = 'run_test', idempotencyKey = 'idem_test') {
   }
 }
 
+let tempDirs = []
+function tempFile(name = 'state.json') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slabscout-'))
+  tempDirs.push(dir)
+  return path.join(dir, name)
+}
+
 test.beforeEach(() => resetStateForTests())
+test.afterEach(() => {
+  resetStateForTests()
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
+})
 
 test('P0-A constants use Arc Testnet production values', () => {
   assert.equal(ARC_TESTNET_CHAIN_ID, 5042002)
@@ -146,7 +160,7 @@ test('P0-A.2 invalid cert is a REJECT live signal, not replay fallback', async (
   }
 })
 
-test('P0-A.2 Renaiss 5xx fallback blocks payment and escrow', async () => withEnv({ MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_OPERATOR_TOKEN: 'op', SLABSCOUT_STATE_FILE: `/tmp/slabscout-test-${process.pid}-5xx.json` }, async () => {
+test('P0-A.2 Renaiss 5xx fallback blocks payment and escrow', async () => withEnv({ MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_OPERATOR_TOKEN: 'op', SLABSCOUT_STATE_FILE: tempFile('5xx.json') }, async () => {
   const prevFetch = global.fetch
   global.fetch = async (url) => ({ ok: false, status: 500, text: async () => 'server error', headers: { get: () => null }, url })
   try {
@@ -344,7 +358,7 @@ test('P0-1 HTTP mode/auth regression: live-cache is rejected before Renaiss', as
   }
 }))
 
-test('P0-1 HTTP mode/auth regression: missing, wrong, and correct live tokens', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct', MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_DEFAULT_MODE: 'replay', SLABSCOUT_STATE_FILE: `/tmp/slabscout-test-${process.pid}-http-live.json` }, async () => {
+test('P0-1 HTTP mode/auth regression: missing, wrong, and correct live tokens', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct', MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_DEFAULT_MODE: 'replay', SLABSCOUT_STATE_FILE: tempFile('http-live.json') }, async () => {
   const app = scoutApp()
   const missing = await request(app, { body: { mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'missing-token' } })
   assert.equal(missing.status, 401)

@@ -25,6 +25,8 @@ jobs:
         run: npm run secret-scan
       - name: Node unit tests
         run: npm test
+      - name: Node unit tests (repeat for isolation)
+        run: npm test
       - name: Backend/source syntax lint
         run: npm run lint
       - name: Frontend lint

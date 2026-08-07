@@ -15,7 +15,7 @@ const { payForMarketProof, reserveEscrow, isReconciliationError, reconciliationS
 const { appendAudit } = require('./audit-log')
 const stateStore = require('./state-store')
 const { resolveEffectiveMode } = require('./mode')
-const { assertLiveSpendPreflight } = require('./live-spend-preflight')
+const { assertPaymentPreflight } = require('./live-spend-preflight')
 
 function runId() {
   return `run_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`
@@ -176,9 +176,8 @@ async function runScout(body = {}) {
 
   await stateStore.saveAuthorizationSnapshot({ runId: id, owner, authorization })
   const budgetImpact = mode === 'live'
-  const held = await stateStore.reserveBudget({ runId: id, owner, amountUsdc: plannedRunSpend(authorization, offer), dailyBudgetUsdc: authorization.dailyBudgetUsdc, budgetImpact })
-  await stateStore.markRunStage(id, 'budget-held')
-  pushTimeline(timeline, '授权读取', 'done', '用户预算、目标卡身份和硬门槛已固定；服务端忽略客户端 spentTodayUsdc，并按 run/idempotency 约束执行。', { idempotencyKey, budgetHeldUsdc: held.amountUsdc || 0 })
+  await stateStore.markRunStage(id, 'authorization-fixed')
+  pushTimeline(timeline, '授权读取', 'done', '用户预算、目标卡身份和硬门槛已固定；服务端忽略客户端 spentTodayUsdc，并按 operation-level budget line items 执行。', { idempotencyKey, plannedSpendUsdc: plannedRunSpend(authorization, offer) })
 
   let signal
   let payment = null
@@ -202,11 +201,13 @@ async function runScout(body = {}) {
     finalDecision = preliminary
 
     if (preliminary.action === 'INVESTIGATE' && authorization.requireMarketProof === true) {
+      const paymentAmount = Number(process.env.MARKET_PROOF_PRICE_USDC || 0.001)
       if (mode === 'live') {
-        const preflight = await assertLiveSpendPreflight({ offer, authorization, owner })
-        pushTimeline(timeline, 'Arc 付款前预检', 'done', `Arc chain/escrow/USDC/reservation/wallet/gas checks passed before x402 payment；offerHash=${preflight.offerHash.slice(0, 18)}…。`, { checks: preflight.checks })
+        const preflight = await assertPaymentPreflight({ authorization, owner })
+        await stateStore.reserveBudgetLineItem({ runId: id, owner, operation: 'services-pay', amountUsdc: paymentAmount, dailyBudgetUsdc: authorization.dailyBudgetUsdc, budgetImpact, meta: { offerId: offer.id } })
+        pushTimeline(timeline, 'x402 付款前预检', 'done', `Circle testnet session、wallet list ownership、payment cap 与 unresolved payment checks passed；fee=${preflight.amountUsdc} USDC。`, { checks: preflight.checks })
       }
-      await stateStore.claimPaymentIntent({ runId: id, idempotencyKey, offerId: offer.id, owner, amountUsdc: Number(process.env.MARKET_PROOF_PRICE_USDC || 0.001), budgetImpact })
+      await stateStore.claimPaymentIntent({ runId: id, idempotencyKey, offerId: offer.id, owner, amountUsdc: paymentAmount, budgetImpact })
       await stateStore.markRunStage(id, 'payment-submitting')
       payment = await payForMarketProof({ runId: id, idempotencyKey, offer, authorization, dataMode: signal.dataMode })
       pushTimeline(
@@ -217,10 +218,12 @@ async function runScout(body = {}) {
         { receiptId: payment.receiptId },
       )
       if (payment.status === 'reconciliation_required') {
+        await stateStore.updateBudgetLineItem({ runId: id, operation: 'services-pay', status: 'ambiguous', externalId: payment.circlePaymentId || payment.receiptId || payment.txHash || null, meta: { paymentStatus: payment.status } })
         await stateStore.updatePaymentIntent(idempotencyKey, 'reconciliation_required', { payment })
         finalDecision = { ...preliminary, action: 'INVESTIGATE', explanation: '付款状态未知，进入 reconciliation_required，禁止自动重付。' }
       } else if (payment.verification?.ok) {
         await stateStore.recordPayment(payment, { owner, budgetImpact: mode === 'live' && payment.confirmed === true })
+        await stateStore.updateBudgetLineItem({ runId: id, operation: 'services-pay', status: mode === 'live' ? 'spent' : 'released', externalId: payment.circlePaymentId || payment.receiptId || payment.txHash || null, meta: { providerStatus: payment.providerStatus } })
         await stateStore.updatePaymentIntent(idempotencyKey, 'payment-confirmed', { receiptId: payment.receiptId })
         await stateStore.markRunStage(id, 'payment-confirmed')
         if (payment.proof && mode === 'live') {
@@ -246,6 +249,7 @@ async function runScout(body = {}) {
         await stateStore.markRunStage(id, 'proof-verified')
         pushTimeline(timeline, '规则复判', finalDecision.action === 'RESERVE' ? 'done' : 'blocked', finalDecision.explanation)
       } else {
+        await stateStore.updateBudgetLineItem({ runId: id, operation: 'services-pay', status: 'released', meta: { paymentStatus: payment.status } })
         await stateStore.updatePaymentIntent(idempotencyKey, 'failed', { payment })
         finalDecision = { ...preliminary, action: 'INVESTIGATE', explanation: '支付适配器未完成可信付款/模拟凭证；保持调查状态，禁止锁订金。' }
         pushTimeline(timeline, '支付保护', 'blocked', finalDecision.explanation)
@@ -258,9 +262,11 @@ async function runScout(body = {}) {
         await stateStore.recordProof(proof)
         pushTimeline(timeline, 'PolicyProof', 'done', `未要求付费 MarketProof；生成独立 PolicyProof ${proof.proofHash.slice(0, 18)}… 供 escrow 审计。`)
       }
+      if (mode === 'live') await stateStore.reserveBudgetLineItem({ runId: id, owner, operation: 'reserve', amountUsdc: Number(offer.depositUsdc || 0), dailyBudgetUsdc: authorization.dailyBudgetUsdc, budgetImpact, meta: { offerId: offer.id } })
       await stateStore.markRunStage(id, 'escrow-submitting')
       escrow = await reserveEscrow({ runId: id, idempotencyKey, offer, proof, authorization, dataMode: signal.dataMode, payment, decision: finalDecision })
       await stateStore.recordReservation(escrow, { owner, budgetImpact: mode === 'live' && escrow.chainConfirmed === true })
+      await stateStore.updateBudgetLineItem({ runId: id, operation: 'reserve', status: escrow.chainConfirmed ? 'spent' : escrow.status === 'reconciliation_required' ? 'ambiguous' : 'released', externalId: escrow.circleTransactionId || escrow.txHash || null, meta: { escrowStatus: escrow.status, operation: escrow.operation || 'reserve' } })
       await stateStore.markRunStage(id, escrow.chainConfirmed ? 'chain-confirmed' : escrow.status === 'reconciliation_required' ? 'reconciliation-required' : 'failed')
       pushTimeline(timeline, 'Arc 订金合约', escrow.chainConfirmed ? 'done' : 'warn', escrow.chainConfirmed ? `Arc escrow 已链上确认 ${offer.depositUsdc} USDC 订金。` : escrow.note, { txHash: escrow.txHash })
     } else if (finalDecision.action === 'REJECT') {

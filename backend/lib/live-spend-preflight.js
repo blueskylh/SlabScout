@@ -1,5 +1,5 @@
 const crypto = require('node:crypto')
-const { stableJson, ARC_TESTNET_USDC_ADDRESS } = require('../../packages/shared')
+const { stableJson, ARC_TESTNET_USDC_ADDRESS, DEFAULT_MARKET_PROOF_PRICE_USDC } = require('../../packages/shared')
 const { nonZeroAddress } = require('../../packages/shared/validation')
 const circleCli = require('./circle-cli')
 const arcRpc = require('./arc-rpc')
@@ -37,20 +37,58 @@ function sameAddress(a, b) {
   return normalizeAddress(a) === normalizeAddress(b)
 }
 
-function circlePaymasterAvailable(walletStatus) {
-  const normalized = walletStatus?.normalized || circleCli.normalizeWalletStatus(walletStatus?.parsed || walletStatus)
-  const testnet = normalized?.data?.testnet || {}
-  return testnet.paymasterStatus === 'AVAILABLE' || testnet.paymasterAvailable === true || testnet.gasSponsorStatus === 'AVAILABLE'
-}
-
 function bigintValue(value) {
   return typeof value === 'bigint' ? value : BigInt(value || 0)
 }
 
-async function assertLiveSpendPreflight({ offer, authorization, owner = 'operator:live', circle = circleCli, arc = arcRpc, state = stateStore } = {}) {
+function paymentAmountUsdc(authorization) {
+  const configured = Number(process.env.MARKET_PROOF_PRICE_USDC || DEFAULT_MARKET_PROOF_PRICE_USDC)
+  if (!Number.isFinite(configured) || configured <= 0) throw preflightError('payment-amount', 'MARKET_PROOF_PRICE_USDC must be positive', { statusCode: 400 })
+  if (configured > Number(authorization.maxIntelFeeUsdc)) throw preflightError('payment-amount', 'MARKET_PROOF_PRICE_USDC exceeds authorization.maxIntelFeeUsdc', { statusCode: 400 })
+  return configured
+}
+
+async function assertCircleSessionAndWallet({ checks, circle, wallet }) {
+  const status = await circle.circleWalletStatus()
+  assertCheck(checks, 'circle-testnet-session', circleCli.circleTestnetSessionOk(status), status.normalized?.data?.testnet?.tokenStatus || null, 'Circle CLI testnet tokenStatus must be VALID', { statusCode: 503 })
+  const walletList = await circle.circleWalletList({ chain: 'ARC-TESTNET', type: 'agent' })
+  assertCheck(checks, 'circle-wallet-list-ownership', circleCli.circleWalletListHasAddress(walletList, wallet), wallet, 'circle wallet list does not contain the configured CIRCLE_AGENT_WALLET_ADDRESS', { statusCode: 503 })
+  return { status, walletList }
+}
+
+async function assertEstimateOrNativeGas({ checks, circle, arc, wallet, rpcUrl, estimate }) {
+  if (estimate?.normalized?.canExecute === true) {
+    assertCheck(checks, 'wallet-execute-estimate', true, { canExecute: true }, null)
+    return { ok: true, source: 'circle-estimate' }
+  }
+  if (estimate?.normalized?.insufficient === true) {
+    assertCheck(checks, 'wallet-execute-estimate', false, estimate.normalized.data, 'Circle wallet execute --estimate reports the operation is not executable', { statusCode: 503 })
+  }
+  const nativeBalance = arc.getNativeBalance ? bigintValue(await arc.getNativeBalance({ address: wallet, rpcUrl })) : 0n
+  if (nativeBalance > 0n) {
+    assertCheck(checks, 'native-gas-fallback', true, { nativeBalanceWei: nativeBalance.toString(), reason: 'estimate did not expose a deterministic canExecute flag' }, null)
+    return { ok: true, source: 'native-balance' }
+  }
+  assertCheck(checks, 'native-gas-fallback', false, { nativeBalanceWei: nativeBalance.toString(), estimate: estimate?.normalized?.data || null }, 'Circle estimate was not decisive and native gas balance is zero', { statusCode: 503 })
+  return { ok: false }
+}
+
+async function assertPaymentPreflight({ authorization, owner = 'operator:live', circle = circleCli, state = stateStore } = {}) {
   const checks = []
   assertCheck(checks, 'circle-mode-live', process.env.CIRCLE_MODE === 'live', process.env.CIRCLE_MODE || 'mock', 'CIRCLE_MODE=live is required before live x402 payment', { statusCode: 503 })
-  assertCheck(checks, 'arc-execution-mode-live', process.env.ARC_EXECUTION_MODE === 'live', process.env.ARC_EXECUTION_MODE || 'mock', 'ARC_EXECUTION_MODE=live is required before live x402 payment', { statusCode: 503 })
+  const wallet = process.env.CIRCLE_AGENT_WALLET_ADDRESS || null
+  assertCheck(checks, 'circle-wallet-configured', nonZeroAddress(wallet), wallet, 'CIRCLE_AGENT_WALLET_ADDRESS must be a non-zero EVM address', { statusCode: 503 })
+  const amountUsdc = paymentAmountUsdc(authorization)
+  assertCheck(checks, 'payment-amount-cap', amountUsdc <= Number(authorization.maxIntelFeeUsdc), amountUsdc, 'MarketProof fee exceeds authorization.maxIntelFeeUsdc', { statusCode: 400 })
+  const unresolved = await state.listUnresolvedReconciliations({ owner, operations: ['services-pay'] })
+  assertCheck(checks, 'unresolved-payment-reconciliation', unresolved.length === 0, unresolved.length, 'Unresolved services-pay reconciliation exists; resolve it before another x402 payment', { unresolved })
+  await assertCircleSessionAndWallet({ checks, circle, wallet })
+  return { ok: true, amountUsdc, wallet, checks }
+}
+
+async function assertEscrowExecutionPreflight({ offer, owner = 'operator:live', circle = circleCli, arc = arcRpc, state = stateStore } = {}) {
+  const checks = []
+  assertCheck(checks, 'arc-execution-mode-live', process.env.ARC_EXECUTION_MODE === 'live', process.env.ARC_EXECUTION_MODE || 'mock', 'ARC_EXECUTION_MODE=live is required before live escrow execution', { statusCode: 503 })
   const wallet = process.env.AGENT_WALLET_ADDRESS || process.env.CIRCLE_AGENT_WALLET_ADDRESS || null
   const circleWallet = process.env.CIRCLE_AGENT_WALLET_ADDRESS || null
   const escrow = process.env.RESERVATION_ESCROW_ADDRESS || null
@@ -63,12 +101,9 @@ async function assertLiveSpendPreflight({ offer, authorization, owner = 'operato
   assertCheck(checks, 'escrow-configured', nonZeroAddress(escrow), escrow, 'RESERVATION_ESCROW_ADDRESS must be a non-zero EVM address', { statusCode: 503 })
   assertCheck(checks, 'usdc-configured', sameAddress(usdc, ARC_TESTNET_USDC_ADDRESS), usdc, `ARC_USDC_ADDRESS must be ${ARC_TESTNET_USDC_ADDRESS}`, { statusCode: 503 })
 
-  const unresolved = await state.listUnresolvedReconciliations({ owner })
-  assertCheck(checks, 'unresolved-reconciliation', unresolved.length === 0, unresolved.length, 'Unresolved live reconciliation exists; reconcile Circle/Arc state before starting another live spend', { unresolved })
-
-  const walletStatus = await circle.circleWalletStatus()
-  assertCheck(checks, 'circle-testnet-session', circleCli.circleTestnetSessionOk(walletStatus), walletStatus.normalized?.data?.testnet?.tokenStatus || null, 'Circle CLI testnet tokenStatus must be VALID before live x402 payment', { statusCode: 503 })
-  assertCheck(checks, 'circle-wallet-controls-address', circleCli.circleWalletControlsAddress(walletStatus, wallet), wallet, 'Circle CLI session does not control the configured Agent Wallet used for Arc execution', { statusCode: 503 })
+  const unresolved = await state.listUnresolvedReconciliations({ owner, operations: ['approve', 'reserve'] })
+  assertCheck(checks, 'unresolved-escrow-reconciliation', unresolved.length === 0, unresolved.length, 'Unresolved approve/reserve reconciliation exists; resolve it before live escrow execution', { unresolved })
+  await assertCircleSessionAndWallet({ checks, circle, wallet })
 
   const rpcUrl = process.env.ARC_RPC_URL || arc.RPC_URL
   const chainId = await arc.assertArcChain({ rpcUrl })
@@ -83,18 +118,30 @@ async function assertLiveSpendPreflight({ offer, authorization, owner = 'operato
   assertCheck(checks, 'escrow-existing-reservation', Number(existing.status) === 0, existing.status, 'Reservation already exists for this offerHash; reconcile before spending')
   const tokenBalance = bigintValue(await arc.getTokenBalance({ owner: wallet, token: ARC_TESTNET_USDC_ADDRESS, rpcUrl }))
   assertCheck(checks, 'agent-wallet-usdc-balance', tokenBalance >= amountMinor, tokenBalance.toString(), 'Agent wallet Arc Testnet USDC balance is below this deposit')
-  const nativeBalance = arc.getNativeBalance ? bigintValue(await arc.getNativeBalance({ address: wallet, rpcUrl })) : 0n
-  const nativeGasRequired = process.env.ARC_NATIVE_GAS_REQUIRED === 'true'
-  const paymasterOk = circlePaymasterAvailable(walletStatus)
-  const gasOk = nativeGasRequired ? nativeBalance > 0n : (nativeBalance > 0n || paymasterOk)
-  assertCheck(checks, 'gas-or-paymaster', gasOk, { nativeBalanceWei: nativeBalance.toString(), paymasterOk }, 'No native gas balance or Circle paymaster signal is available for Arc wallet execution', { statusCode: 503 })
+  const allowance = bigintValue(await arc.getAllowance({ owner: wallet, spender: escrow, token: ARC_TESTNET_USDC_ADDRESS, rpcUrl }))
+  assertCheck(checks, 'agent-wallet-usdc-allowance-read', true, allowance.toString(), null)
 
-  return { ok: true, offerHash, amountMinor: amountMinor.toString(), checks }
+  const estimateCalls = []
+  if (allowance < amountMinor) {
+    const approveEstimate = await circle.circleWalletExecuteEstimate({ signature: 'approve(address,uint256)', params: [escrow, amountMinor.toString()], contract: ARC_TESTNET_USDC_ADDRESS, address: wallet, chain: 'ARC-TESTNET', rpcUrl })
+    estimateCalls.push('approve')
+    await assertEstimateOrNativeGas({ checks, circle, arc, wallet, rpcUrl, estimate: approveEstimate })
+  }
+  const reserveEstimate = await circle.circleWalletExecuteEstimate({ signature: 'reserve(bytes32,address,uint256,bytes32,uint64)', params: [offerHash, offer.sellerAddress, amountMinor.toString(), `0x${'1'.repeat(64)}`, String(Math.floor(Date.now() / 1000) + 3600)], contract: escrow, address: wallet, chain: 'ARC-TESTNET', rpcUrl })
+  estimateCalls.push('reserve')
+  await assertEstimateOrNativeGas({ checks, circle, arc, wallet, rpcUrl, estimate: reserveEstimate })
+
+  return { ok: true, offerHash, amountMinor: amountMinor.toString(), wallet, escrow, allowance: allowance.toString(), estimateCalls, checks }
+}
+
+async function assertLiveSpendPreflight(args = {}) {
+  return assertEscrowExecutionPreflight(args)
 }
 
 module.exports = {
+  assertPaymentPreflight,
+  assertEscrowExecutionPreflight,
   assertLiveSpendPreflight,
   deterministicOfferHash,
   amountMinorUsdc,
-  circlePaymasterAvailable,
 }

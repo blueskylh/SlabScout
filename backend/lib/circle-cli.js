@@ -84,24 +84,30 @@ function circleTestnetSessionOk(status) {
   return Boolean(normalized?.ok === true && normalized.data?.testnet?.tokenStatus === 'VALID')
 }
 
-function addressCandidates(value) {
-  if (!value || typeof value !== 'object') return []
-  return [
-    value.walletAddress,
-    value.address,
-    value.accountAddress,
-    value.agentWalletAddress,
-    value.wallet?.address,
-    value.account?.address,
-  ].filter(Boolean).map((item) => String(item).toLowerCase())
+function normalizeWalletList(parsed) {
+  const envelope = normalizeCircleEnvelope(parsed)
+  const data = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data) ? envelope.data : {}
+  const wallets = Array.isArray(data.wallets) ? data.wallets : []
+  return { ...envelope, ok: Boolean(envelope.ok && Array.isArray(data.wallets)), data: { ...data, wallets } }
 }
 
-function circleWalletControlsAddress(status, expectedAddress) {
-  if (!expectedAddress || !circleTestnetSessionOk(status)) return false
-  const normalized = status?.normalized || normalizeWalletStatus(status?.parsed || status)
-  const data = normalized.data || {}
-  const candidates = [...addressCandidates(data.testnet), ...addressCandidates(data)]
-  return candidates.includes(String(expectedAddress).toLowerCase())
+function walletAddressOf(wallet) {
+  return wallet?.address || wallet?.wallet || wallet?.walletIdAddress || wallet?.evmAddress || null
+}
+
+function circleWalletListHasAddress(walletList, expectedAddress) {
+  if (!expectedAddress) return false
+  const normalized = walletList?.normalized || normalizeWalletList(walletList?.parsed || walletList)
+  const expected = String(expectedAddress).toLowerCase()
+  return (normalized?.data?.wallets || []).some((wallet) => String(walletAddressOf(wallet) || '').toLowerCase() === expected)
+}
+
+function normalizeEstimate(parsed) {
+  const envelope = normalizeCircleEnvelope(parsed)
+  const data = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data) ? envelope.data : {}
+  const canExecute = data.canExecute === true || data.executable === true || data.estimate?.canExecute === true || data.simulation?.success === true || data.status === 'OK'
+  const insufficient = data.canExecute === false || data.executable === false || data.estimate?.canExecute === false || data.simulation?.success === false || data.error || data.reason
+  return { ...envelope, ok: Boolean(envelope.ok && !insufficient && (canExecute || Object.keys(data).length > 0)), data, canExecute, insufficient: Boolean(insufficient) }
 }
 
 function normalizeServicesPayResult(result) {
@@ -139,6 +145,22 @@ function extractTxHash(parsed, stdout = '') {
 
 function extractCircleTransactionId(parsed) {
   return parsed?.data?.id || parsed?.data?.transactionId || parsed?.id || parsed?.transactionId || parsed?.circleTransactionId || null
+}
+
+function transactionIdOf(transaction) {
+  return transaction?.id || transaction?.transactionId || transaction?.circleTransactionId || null
+}
+
+function txHashOfTransaction(transaction) {
+  return transaction?.txHash || transaction?.transactionHash || transaction?.hash || transaction?.receipt?.transactionHash || null
+}
+
+function normalizeTransactionList(parsed) {
+  const envelope = normalizeCircleEnvelope(parsed)
+  const data = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data) ? envelope.data : {}
+  const transactions = Array.isArray(data.transactions) ? data.transactions : []
+  const nextCursor = data.nextCursor || data.next_cursor || data.pagination?.nextCursor || data.pagination?.next_cursor || parsed?.nextCursor || parsed?.next_cursor || null
+  return { ...envelope, ok: Boolean(envelope.ok && Array.isArray(data.transactions)), data: { ...data, transactions, nextCursor } }
 }
 
 function normalizeVersion(stdout = '') {
@@ -200,6 +222,12 @@ async function circleWalletStatus() {
   return { ...result, parsed, normalized: normalizeWalletStatus(parsed) }
 }
 
+async function circleWalletList({ chain = 'ARC-TESTNET', type = 'agent' } = {}) {
+  const result = await runCircle(['wallet', 'list', '--chain', chain, '--type', type, '--output', 'json'], { timeoutMs: 30_000 })
+  const parsed = parseJsonOutput(result.stdout)
+  return { ...result, parsed, normalized: normalizeWalletList(parsed) }
+}
+
 async function circleGatewayBalance({ address, chain = 'ARC-TESTNET' }) {
   assertEvmAddress(address, 'address')
   const result = await runCircle(['gateway', 'balance', '--address', address, '--chain', chain, '--output', 'json'], { timeoutMs: 30_000 })
@@ -215,11 +243,38 @@ async function circleServicesPay({ url, address, chain = 'ARC-TESTNET', maxAmoun
   return { ...result, parsed, servicesPay: normalizeServicesPayResult({ ...result, parsed }) }
 }
 
-async function circleTransactionStatus({ transactionId }) {
-  if (!transactionId || typeof transactionId !== 'string') throw new Error('transactionId is required')
-  const result = await runCircle(['wallet', 'transactions', 'get', transactionId, '--output', 'json'], { timeoutMs: 30_000 })
+async function circleWalletExecuteEstimate({ signature, params = [], contract, address, chain = 'ARC-TESTNET', rpcUrl }) {
+  assertEvmAddress(contract, 'contract')
+  assertEvmAddress(address, 'address')
+  const args = ['wallet', 'execute', signature, ...params.map(String), '--contract', contract, '--address', address, '--chain', chain, '--estimate', '--output', 'json']
+  if (rpcUrl) args.push('--rpc-url', rpcUrl)
+  const result = await runCircle(args, { timeoutMs: 45_000 })
   const parsed = parseJsonOutput(result.stdout)
-  return { ...result, parsed, normalized: normalizeCircleEnvelope(parsed) }
+  return { ...result, parsed, normalized: normalizeEstimate(parsed) }
+}
+
+async function circleTransactionList({ address, chain = 'ARC-TESTNET', operation = 'execute', limit = 50, cursor = null } = {}) {
+  assertEvmAddress(address, 'address')
+  const args = ['transaction', 'list', '--address', address, '--chain', chain, '--operation', operation, '--limit', String(limit), '--output', 'json']
+  if (cursor) args.push('--cursor', String(cursor))
+  const result = await runCircle(args, { timeoutMs: 30_000 })
+  const parsed = parseJsonOutput(result.stdout)
+  return { ...result, parsed, normalized: normalizeTransactionList(parsed) }
+}
+
+async function findCircleExecuteTransaction({ address, transactionId, chain = 'ARC-TESTNET', limit = 50 } = {}) {
+  if (!transactionId || typeof transactionId !== 'string') throw new Error('transactionId is required')
+  let cursor = null
+  const pages = []
+  do {
+    const page = await circleTransactionList({ address, chain, operation: 'execute', limit, cursor })
+    const normalized = page.normalized
+    pages.push({ cursor, count: normalized.data.transactions.length })
+    const found = normalized.data.transactions.find((transaction) => transactionIdOf(transaction) === transactionId)
+    if (found) return { found: true, transaction: found, txHash: txHashOfTransaction(found), pages, normalized }
+    cursor = normalized.data.nextCursor || null
+  } while (cursor)
+  return { found: false, transaction: null, txHash: null, pages }
 }
 
 async function circleWalletExecute({ signature, params = [], contract, address, chain = 'ARC-TESTNET', rpcUrl, idempotencyKey }) {
@@ -242,16 +297,22 @@ module.exports = {
   normalizeCircleEnvelope,
   normalizeServicesPayResult,
   normalizeWalletStatus,
+  normalizeWalletList,
+  normalizeEstimate,
+  normalizeTransactionList,
   circleTestnetSessionOk,
-  circleWalletControlsAddress,
+  circleWalletListHasAddress,
   extractTxHash,
   extractCircleTransactionId,
   normalizeVersion,
   circleCliVersionSupported,
   circleCliVersion,
   circleWalletStatus,
+  circleWalletList,
   circleGatewayBalance,
-  circleTransactionStatus,
   circleServicesPay,
+  circleWalletExecuteEstimate,
+  circleTransactionList,
+  findCircleExecuteTransaction,
   circleWalletExecute,
 }

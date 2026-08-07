@@ -42,7 +42,7 @@ MARKET_PROOF_SELLER_ADDRESS=<seller wallet receiving x402 payments>
 CIRCLE_GATEWAY_FACILITATOR_URL=https://gateway-api-testnet.circle.com
 ```
 
-The Circle CLI must be installed on the backend host and already authenticated to the intended testnet Agent Wallet context. The app invokes the CLI through `execFile` with argument arrays, not shell string concatenation. The parser is verified against Circle CLI `0.0.6` JSON envelopes and requires `normalized.data.testnet.tokenStatus === "VALID"`; `EXPIRED`, `NOT_LOGGED_IN`, or mainnet-only `VALID` are not live-ready. Raw stdout is parsed before sanitizing error/log output.
+The Circle CLI must be installed on the backend host and already authenticated to the intended testnet Agent Wallet context. The app invokes the CLI through `execFile` with argument arrays, not shell string concatenation. The parser is verified against Circle CLI `0.0.6` JSON envelopes and requires `normalized.data.testnet.tokenStatus === "VALID"`; `EXPIRED`, `NOT_LOGGED_IN`, or mainnet-only `VALID` are not live-ready. Wallet ownership is verified with the separate read-only command `circle wallet list --chain ARC-TESTNET --type agent --output json`; wallet status is never treated as an address source. Raw stdout is parsed before sanitizing error/log output.
 
 Live Arc escrow readiness:
 
@@ -101,13 +101,14 @@ Do not deploy on mainnet. The script checks `block.chainid == 5042002` and USDC 
 Live MarketProof payment uses Circle Gateway nanopayments / x402 seller middleware:
 
 1. `/api/scout/run` verifies live operator auth, checks unresolved reconciliation before idempotency claim, and requires a writable state file before any external spend.
-2. Before `claimPaymentIntent` or `circle services pay`, backend `LiveSpendPreflight` performs read-only checks: Arc chain ID, escrow bytecode, `escrow.usdc()`, `maxReservationAmount()`, `reservations(offerHash)`, Agent Wallet on-chain USDC balance, gas/paymaster signal, Circle testnet session, and wallet control. Any failure stops before x402 payment.
-3. The buyer side calls Circle CLI: `circle services pay <MARKET_PROOF_SERVICE_URL> --quiet --address <CIRCLE_AGENT_WALLET_ADDRESS> --chain ARC-TESTNET --max-amount 0.001 ...`. Circle CLI `services pay` is treated as application-level idempotent only: the request body carries SlabScout `idempotencyKey`, and the server-side paymentIntent prevents duplicate payment attempts. Circle CLI `0.0.6` does not provide a reliable native `--idempotency-key` for `services pay`, so the app does not pass one there.
-4. `/api/market-proof/prove` is protected by `createGatewayMiddleware` from `@circle-fin/x402-batching/server`, restricted to `eip155:5042002`.
-5. After the gateway verifies/settles payment, the seller endpoint refetches Renaiss data server-side and signs MarketProof.
-6. The buyer side re-verifies the returned payment receipt and MarketProof before escrow.
+2. Before `claimPaymentIntent` or `circle services pay`, backend `PaymentPreflight` performs read-only checks: Circle live mode, testnet session, `circle wallet list` ownership, payment cap, and unresolved services-pay reconciliation. Any failure stops before x402 payment.
+3. Before any real approve/reserve, backend `EscrowExecutionPreflight` performs read-only checks: Arc chain ID, escrow bytecode, `escrow.usdc()`, `maxReservationAmount()`, `reservations(offerHash)`, Agent Wallet on-chain USDC balance, allowance, wallet ownership, and `circle wallet execute ... --estimate --output json`. If estimate is not decisive, the fallback is conservative native balance; no wallet-status paymaster fields are used.
+4. The buyer side calls Circle CLI: `circle services pay <MARKET_PROOF_SERVICE_URL> --quiet --address <CIRCLE_AGENT_WALLET_ADDRESS> --chain ARC-TESTNET --max-amount 0.001 ...`. Circle CLI `services pay` is treated as application-level idempotent only: the request body carries SlabScout `idempotencyKey`, and the server-side paymentIntent prevents duplicate payment attempts. Circle CLI `0.0.6` does not provide a reliable native `--idempotency-key` for `services pay`, so the app does not pass one there.
+5. `/api/market-proof/prove` is protected by `createGatewayMiddleware` from `@circle-fin/x402-batching/server`, restricted to `eip155:5042002`.
+6. After the gateway verifies/settles payment, the seller endpoint refetches Renaiss data server-side and signs MarketProof.
+7. The buyer side re-verifies the returned payment receipt and MarketProof before escrow.
 
-Any unknown Circle CLI result or submitted transaction receipt timeout enters `reconciliation_required`; operators must resolve it before retrying with a new live spend. Budget holds remain marked as reconciliation-held rather than released as ordinary failures. Use `GET /api/scout/reconciliations` to list unresolved items and `POST /api/scout/reconciliations/:runId/resolve` to run server-side Circle/Arc authority checks; the endpoint rejects client-declared outcomes.
+Any unknown Circle CLI result or submitted transaction receipt timeout enters `reconciliation_required`; operators must resolve it before retrying with a new live spend. Budget line items remain `ambiguous` rather than released as ordinary failures. Use `GET /api/scout/reconciliations` to list unresolved items and `POST /api/scout/reconciliations/:runId/resolve` to run server-side Circle/Arc authority checks; the endpoint rejects client-declared outcomes and resolves `services-pay`, `approve`, and `reserve` independently. Wallet execute reconciliation uses `circle transaction list --address <wallet> --chain ARC-TESTNET --operation execute --limit 50 --output json` with cursor pagination and exact transaction ID matching.
 
 ## Arc escrow flow
 
@@ -144,7 +145,7 @@ GitHub workflow `Live E2E (manual, secrets-gated)` runs readiness only by defaul
 ## Deployment smoke
 
 - `GET /api/status` returns 200, lists missing live env if any, and marks `readinessLevel=config-only` plus `liveConfigComplete`.
-- `GET /api/status/live-readiness` requires an operator token and performs read-only checks only: live config, Circle CLI version/session, configured wallet, Gateway balance, Arc chain ID/RPC, escrow bytecode, state-file writability, and unresolved reconciliation.
+- `GET /api/status/live-readiness` requires an operator token and performs read-only checks only: live config, Circle CLI version/session, wallet list ownership, Gateway balance, Arc chain ID/RPC, escrow bytecode, wallet execute estimate/native-balance fallback, state-file writability, and unresolved reconciliation.
 - `GET /api/demo` returns 200.
 - Replay `POST /api/scout/run` with `offer-reshizard-95` returns policy `RESERVE` and execution `replay-simulated`.
 - Unknown offer returns 400.

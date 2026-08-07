@@ -12,6 +12,7 @@ const { verifyMarketProof, verifyPolicyProof, verifyPaymentReceipt } = require('
 const { persistentStoreConfigured } = require('./state-store')
 const { circleServicesPay, circleWalletExecute, normalizeServicesPayResult, extractTxHash, extractCircleTransactionId } = require('./circle-cli')
 const defaultArcOps = require('./arc-rpc')
+const { assertEscrowExecutionPreflight } = require('./live-spend-preflight')
 const { RPC_URL } = defaultArcOps
 
 function deterministicHash(prefix, payload) {
@@ -272,7 +273,7 @@ function reconciliationReservation({ payload, offerHash, verification, operation
   }
 }
 
-async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorization, dataMode = 'live', payment = null, decision = null, walletExecute = circleWalletExecute, arcOps = defaultArcOps }) {
+async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorization, dataMode = 'live', payment = null, decision = null, walletExecute = circleWalletExecute, arcOps = defaultArcOps, preflight = assertEscrowExecutionPreflight }) {
   assertBaseRuntimeConfig({ live: dataMode !== 'replay' && process.env.ARC_EXECUTION_MODE === 'live' })
   const amountUsdc = positiveNumber(offer.depositUsdc)
   const maxDepositUsdc = positiveNumber(authorization.maxDepositUsdc)
@@ -364,6 +365,8 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
   }
 
   if (!nonZeroAddress(payload.seller) || !nonZeroAddress(payload.buyer) || !nonZeroAddress(payload.escrow)) throw new Error('Live escrow requires non-zero seller, buyer, and escrow EVM addresses')
+  const preflightResult = await preflight({ offer, authorization, owner: 'operator:live', arc: arcOps })
+  payload.preflight = { offerHash: preflightResult.offerHash, checks: preflightResult.checks }
   await arcOps.assertArcChain({ rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
   const existing = await arcOps.getReservation({ escrow: payload.escrow, offerHash, rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
   if (existing.status !== 0) {
@@ -411,6 +414,7 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
   }
 
   const refundAfter = BigInt(Math.floor(Date.now() / 1000) + Number(process.env.ESCROW_REFUND_AFTER_SECONDS || 7 * 24 * 60 * 60))
+  payload.refundAfter = refundAfter.toString()
   let reserve
   try {
     reserve = await walletExecute({

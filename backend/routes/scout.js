@@ -68,7 +68,12 @@ router.post('/reconciliations/:runId/resolve', async (req, res, next) => {
       error.statusCode = 400
       throw error
     }
-    res.json(await resolveReconciliation({ runId: req.params.runId }))
+    if (body.operation && !['services-pay', 'approve', 'reserve'].includes(body.operation)) {
+      const error = new Error('Unsupported reconciliation operation')
+      error.statusCode = 400
+      throw error
+    }
+    res.json(await resolveReconciliation({ runId: req.params.runId, operation: body.operation || req.query.operation || null }))
   } catch (error) {
     next(error)
   }
