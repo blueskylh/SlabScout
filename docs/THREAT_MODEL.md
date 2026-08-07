@@ -34,10 +34,15 @@
 | Secret leakage | API key/private key 进入源码、日志或前端 | `.gitignore`、env examples placeholders、secret scan、backend-only Renaiss client |
 | Dangerous MarketProof API | 客户端传 signal 让服务端签假数据 | `/api/market-proof/prove` 拒绝 client signal，只按 offerId 服务端重抓数据 |
 | Unauthorized live execution | 任意用户触发 Circle/Arc | Live `/api/scout/run` 需要 operator token，timing-safe comparison |
+| Mode bypass | 用 `live-cache`、默认 live 或大小写变体绕过 operator gate | 统一 `resolveEffectiveMode`，公开 mode 只允许 `replay/live`；effective live 一律先鉴权 |
+| Wrong x402 chain | 在非 Arc Testnet Gateway 网络付款后骗 proof | seller middleware restricts `eip155:5042002`，receipt verifier 绑定 Arc Testnet、chainId、USDC address、payer/payee |
+| Concurrent payment intent | 并发 live run 对同一 offer 重复支付 MarketProof | state store 先 claim payment intent；同一 offer 的 active live intent/paid record 阻断第二笔 |
+| Unknown Circle tx state | CLI 超时或返回不可解析时自动重试导致双花 | 返回 `reconciliation_required`，禁止自动重付，要求 operator 先外部对账 |
+| Duplicate escrow reserve | 同一 offerHash 重复 reserve | reserve 前查询合约 reservation，已存在则进入 reconciliation，不发第二笔 tx |
 
 ## 当前剩余风险
 
-- Live Circle Agent Wallet/x402 adapter 仍为 fail-closed 占位，需要真实 Circle credentials、钱包与 x402 service 后完成。
-- Live Arc reserve adapter 仍为 fail-closed 占位，需要部署合约、Agent Wallet approve/reserve、receipt/event decoder。
-- File-based state store 可满足 demo 持久化；生产应替换为有事务和唯一约束的托管数据库。
+- Live Circle Agent Wallet/x402 path 已接入 Circle CLI 与 x402 seller middleware，但仍需要真实 CLI 登录、Agent Wallet、Testnet USDC、service URL、seller address 和外部对账流程。
+- Live Arc reserve path 已接入 approve/reserve/receipt/event verification，但仍需要已部署 escrow 合约、funded Agent Wallet 和真实 Arc RPC。
+- File-based state store 可满足单实例 demo 持久化；生产应替换为有事务和唯一约束的托管数据库，避免多实例并发写。
 - 当前 trusted offer store 是静态 allowlist；动态 seller flow 需要 EIP-712 签名验证。

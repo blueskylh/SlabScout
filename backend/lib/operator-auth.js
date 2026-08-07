@@ -1,4 +1,5 @@
 const crypto = require('node:crypto')
+const { resolveEffectiveMode, modeRequiresOperator } = require('./mode')
 
 function safeEqualString(actual = '', expected = '') {
   const a = Buffer.from(String(actual))
@@ -14,10 +15,6 @@ function tokenFromRequest(req) {
   return null
 }
 
-function modeRequiresOperator(body = {}) {
-  return body.mode === 'live'
-}
-
 function operatorError(statusCode, message) {
   const error = new Error(message)
   error.statusCode = statusCode
@@ -25,7 +22,9 @@ function operatorError(statusCode, message) {
 }
 
 function assertOperatorAuthorized(req) {
-  if (!modeRequiresOperator(req.body || {})) return true
+  const effectiveMode = resolveEffectiveMode(req.body?.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
+  req.effectiveMode = effectiveMode
+  if (!modeRequiresOperator(effectiveMode)) return false
   const configured = process.env.SLABSCOUT_OPERATOR_TOKEN
   if (!configured) throw operatorError(403, 'Live execution requires SLABSCOUT_OPERATOR_TOKEN to be configured on the server')
   const supplied = tokenFromRequest(req)
@@ -34,7 +33,7 @@ function assertOperatorAuthorized(req) {
   return true
 }
 
-function requireOperatorForLive(req, _res, next) {
+function requireOperatorForSpend(req, _res, next) {
   try {
     req.operatorAuthorized = assertOperatorAuthorized(req)
     next()
@@ -43,4 +42,4 @@ function requireOperatorForLive(req, _res, next) {
   }
 }
 
-module.exports = { safeEqualString, tokenFromRequest, modeRequiresOperator, assertOperatorAuthorized, requireOperatorForLive }
+module.exports = { safeEqualString, tokenFromRequest, assertOperatorAuthorized, requireOperatorForSpend }

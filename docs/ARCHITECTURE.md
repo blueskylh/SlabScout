@@ -80,9 +80,9 @@ Replay payment 使用：
 - `replayAccepted = true`
 - 无 tx hash / explorer URL
 
-Live payment 当前 fail-closed：没有完整 Circle Agent Wallet/x402 配置和可信 receipt/tx 时，只返回 `live-unavailable/config-missing` 或 `live-unavailable/not-implemented`，不会显示成功。
+Live payment 已接入 Circle CLI buyer flow 与 x402 seller endpoint，但默认仍 fail-closed：没有 operator token、可写 state file、Circle CLI 登录、Agent Wallet、seller address、service URL 或可信 receipt/tx 时，只返回 `live-unavailable/*` 或 `reconciliation_required`，不会显示成功。
 
-可信 payment receipt verifier 绑定：runId、idempotencyKey、offerId、targetItemId、targetHref、payer、payee/service、Arc Testnet、chainId、USDC address、amount、Circle payment ID 或 tx hash、paidAt、providerStatus，并拒绝 replay / 过期 / 金额或资产不一致。
+可信 payment receipt verifier 绑定：runId、idempotencyKey、offerId、targetItemId、targetHref、payer、payee/service/payeeAddress、Arc Testnet、chainId、USDC address、amount、Circle payment ID 或 tx hash、paidAt、providerStatus，并拒绝 replay / 过期 / 金额或资产不一致。x402 seller middleware 仅接受 `eip155:5042002`，且 proof endpoint 会重新拉取 Renaiss 数据，不签客户端提交的数据。
 
 ## 6. MarketProof / PolicyProof
 
@@ -110,10 +110,14 @@ Live payment 当前 fail-closed：没有完整 Circle Agent Wallet/x402 配置�
 - offerId 不可重复
 - SafeERC20-style false-return 检查
 
-前端只有在真实 tx hash、block number、matching `Reserved` event 和 chain receipt 都存在时才能显示 `chain-confirmed`。Replay escrow 使用 `replay-escrow-simulated`，`chainConfirmed=false`。
+Live escrow 通过 Arc RPC 校验 chainId、查询已有 reservation、检查 USDC allowance，必要时用 Circle CLI approve，然后调用 `reserve(bytes32,address,uint256,bytes32,uint64)`。前端只有在真实 tx hash、block number、matching `Reserved` event 和 chain receipt 都存在时才能显示 `chain-confirmed`。Replay escrow 使用 `replay-escrow-simulated`，`chainConfirmed=false`。
 
 ## 8. Persistent state and audit
 
-后端新增 state store，用于 run/idempotency/payment/proof/reservation/audit。Live 执行缺少 `SLABSCOUT_STATE_FILE` 或 `DATABASE_URL` 时 fail-closed，不会花钱。
+后端 state store 用于 run/idempotency/paymentIntent/payment/proof/reservation/audit/budget hold。Live 执行缺少可写 `SLABSCOUT_STATE_FILE` 时 fail-closed，不会花钱；`DATABASE_URL` 在本 MVP 中不是已实现持久化。
 
-同一 idempotencyKey 重试返回原结果；同一 receipt 或 offer reservation 不能被不同 run 重放。预算必须在执行前保留，失败后释放。
+同一 idempotencyKey 重试返回原结果；同一 receipt、同一 live MarketProof payment intent 或同一 offer reservation 不能被不同 run 重放。预算必须在执行前保留，失败后释放。
+
+## 9. Live mode and operator boundary
+
+公开 mode 只有 `replay` 和 `live`。`live-cache`、大小写变体、空字符串或其他伪模式都会在外部调用前拒绝。只要 effective mode 是 `live`，无论来自请求 body 还是 `SLABSCOUT_DEFAULT_MODE`，都必须先通过 `x-slabscout-operator-token` / Bearer token 鉴权，并且 live run 必须带显式 `idempotencyKey`。

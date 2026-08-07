@@ -7,7 +7,7 @@ const {
   ARC_TESTNET_NAME,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
 } = require('../shared')
-const { validProofHash } = require('../shared/validation')
+const { validProofHash, nonZeroAddress } = require('../shared/validation')
 
 const DEFAULT_SIGNING_SECRET = 'slabscout-demo-signing-secret'
 const DEFAULT_POLICY_SIGNING_SECRET = 'slabscout-demo-policy-proof-secret'
@@ -186,7 +186,9 @@ function canonicalPaymentReceipt(payment) {
     targetHref: payment.targetHref || null,
     payerWallet: payment.payerWallet || null,
     payeeService: payment.payeeService || null,
+    payeeAddress: payment.payeeAddress || null,
     network: payment.network || null,
+    providerNetwork: payment.providerNetwork || null,
     chainId: payment.chainId ?? null,
     asset: payment.asset || null,
     usdcAddress: payment.usdcAddress || null,
@@ -206,7 +208,11 @@ function compareNumber(a, b) {
   return Number(a) === Number(b)
 }
 
-function verifyPaymentReceipt({ payment, runId, idempotencyKey, offer, authorization, expectedMode = 'live', now = new Date(), maxPaymentAgeMs = MAX_PAYMENT_AGE_MS, isReceiptUsed } = {}) {
+function sameAddress(a, b) {
+  return typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
+}
+
+async function verifyPaymentReceipt({ payment, runId, idempotencyKey, offer, authorization, expectedMode = 'live', now = new Date(), maxPaymentAgeMs = MAX_PAYMENT_AGE_MS, isReceiptUsed, expectedPayerWallet, expectedPayeeAddress } = {}) {
   const errors = []
   const receipt = canonicalPaymentReceipt(payment)
   if (!receipt) return { ok: false, errors: ['payment missing'], receipt: null }
@@ -230,12 +236,17 @@ function verifyPaymentReceipt({ payment, runId, idempotencyKey, offer, authoriza
     if (receipt.simulated !== true || receipt.replayAccepted !== true) errors.push('replay payment must be explicitly simulated and replayAccepted')
     if (receipt.txHash) errors.push('replay payment cannot include txHash')
   } else {
+    const payer = expectedPayerWallet || process.env.CIRCLE_AGENT_WALLET_ADDRESS || process.env.AGENT_WALLET_ADDRESS
+    const payee = expectedPayeeAddress || process.env.MARKET_PROOF_SELLER_ADDRESS || process.env.MARKET_PROOF_PAYEE_ADDRESS
     if (receipt.confirmed !== true) errors.push('live payment must have confirmed=true')
     if (!receipt.receiptId) errors.push('live payment receiptId missing')
     if (!receipt.circlePaymentId && !receipt.txHash) errors.push('live payment requires Circle payment ID or tx hash')
     if (!['confirmed', 'settled'].includes(receipt.providerStatus)) errors.push('live provider status is not confirmed')
-    if (!receipt.payerWallet) errors.push('live payer wallet missing')
-    if (!receipt.payeeService) errors.push('live payee/service missing')
+    if (receipt.providerNetwork && receipt.providerNetwork !== `eip155:${ARC_TESTNET_CHAIN_ID}`) errors.push('live provider network mismatch')
+    if (!nonZeroAddress(receipt.payerWallet)) errors.push('live payer wallet missing or invalid')
+    if (!nonZeroAddress(receipt.payeeAddress)) errors.push('live payee address missing or invalid')
+    if (!payer || !nonZeroAddress(payer) || !sameAddress(receipt.payerWallet, payer)) errors.push('live payer wallet mismatch')
+    if (!payee || !nonZeroAddress(payee) || !sameAddress(receipt.payeeAddress, payee)) errors.push('live payee address mismatch')
   }
 
   const paidAt = new Date(receipt.paidAt || 0).getTime()
@@ -244,12 +255,12 @@ function verifyPaymentReceipt({ payment, runId, idempotencyKey, offer, authoriza
     if (paidAt - now.getTime() > 60_000) errors.push('payment paidAt is in the future')
     if (now.getTime() - paidAt > maxPaymentAgeMs) errors.push('payment receipt expired')
   }
-  if (receipt.receiptId && typeof isReceiptUsed === 'function' && isReceiptUsed(receipt.receiptId, { runId, offerId: offer?.id })) errors.push('payment receipt replayed')
+  if (receipt.receiptId && typeof isReceiptUsed === 'function' && await isReceiptUsed(receipt.receiptId, { runId, offerId: offer?.id })) errors.push('payment receipt replayed')
   const ok = errors.length === 0
   return { ok, errors, receipt, acceptance: ok ? (replayMode ? 'replay-simulation' : 'live-confirmed') : 'rejected' }
 }
 
-function verifyMarketProof({ proof, offer, authorization, payment, runId, idempotencyKey, expectedMode = 'live', now = new Date(), maxProofAgeMs = MAX_PROOF_AGE_MS, maxSourceAgeMs = MAX_SOURCE_AGE_MS, isReceiptUsed } = {}) {
+async function verifyMarketProof({ proof, offer, authorization, payment, runId, idempotencyKey, expectedMode = 'live', now = new Date(), maxProofAgeMs = MAX_PROOF_AGE_MS, maxSourceAgeMs = MAX_SOURCE_AGE_MS, isReceiptUsed, expectedPayerWallet, expectedPayeeAddress } = {}) {
   const errors = []
   if (!proof || typeof proof !== 'object') return { ok: false, errors: ['proof missing'], proof: null, proofKind: 'MarketProof' }
   if (proof.proofKind !== 'MarketProof') errors.push('proofKind must be MarketProof')
@@ -278,7 +289,9 @@ function verifyMarketProof({ proof, offer, authorization, payment, runId, idempo
     if (proof.cardHref !== targetHref) errors.push('cardHref mismatch')
     if (proof.cardIdentity?.certItemId !== targetItemId) errors.push('cert item mismatch')
     if (proof.cardIdentity?.certHref !== targetHref) errors.push('cert href mismatch')
-    if (proof.cardIdentity?.targetCard !== authorization.targetCard) errors.push('targetCard mismatch')
+    if (proof.cardIdentity?.targetCard !== authorization.targetCard || proof.cardIdentity?.targetCard !== offer.targetCard) errors.push('targetCard mismatch')
+    if (proof.cardIdentity?.certFound !== true) errors.push('certFound must be true')
+    if (proof.cardIdentity?.certMatchesOffer !== true) errors.push('certMatchesOffer must be true')
     if (proof.cardIdentity?.certNumber !== offer.certNumber || proof.cardIdentity?.certNumber !== authorization.certNumber) errors.push('cert mismatch')
     if (proof.cardIdentity?.gradeLabel !== offer.gradeLabel || proof.cardIdentity?.gradeLabel !== authorization.gradeLabel) errors.push('grade mismatch')
     if (proof.cardIdentity?.company !== offer.company || proof.cardIdentity?.company !== authorization.company) errors.push('grading company mismatch')
@@ -288,7 +301,7 @@ function verifyMarketProof({ proof, offer, authorization, payment, runId, idempo
     if (proof.expiresAt !== offer.expiresAt) errors.push('expiresAt mismatch')
   }
 
-  const paymentCheck = verifyPaymentReceipt({ payment, runId, idempotencyKey, offer, authorization, expectedMode, now, isReceiptUsed })
+  const paymentCheck = await verifyPaymentReceipt({ payment, runId, idempotencyKey, offer, authorization, expectedMode, now, isReceiptUsed, expectedPayerWallet, expectedPayeeAddress })
   if (!paymentCheck.ok) errors.push(...paymentCheck.errors)
   if (JSON.stringify(proof.paymentReceipt) !== JSON.stringify(paymentCheck.receipt)) errors.push('payment receipt payload mismatch')
 

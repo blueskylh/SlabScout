@@ -28,7 +28,7 @@
 
 **2:45–3:00 项目价值与下一步**
 
-SlabScout 展示了 agentic economy 的关键模式：agent 可以在用户授权内购买情报、验证证明、再把小额 USDC 锁进 Arc escrow。下一步是配置真实 Circle Agent Wallet、x402 MarketProof service 和 Arc Testnet 合约地址，替换当前 fail-closed live adapter。
+SlabScout 展示了 agentic economy 的关键模式：agent 可以在用户授权内购买情报、验证证明、再把小额 USDC 锁进 Arc escrow。下一步是配置真实 Circle CLI 登录态、Circle Agent Wallet、x402 MarketProof service、seller address、Arc Testnet 合约地址与可写 state file，然后运行手动 live E2E 捕获真实 payment/tx 证据。
 
 ## English Script
 
@@ -58,4 +58,4 @@ Seller B is overpriced and rejected with zero payment. Seller C is low quality a
 
 **2:45–3:00 Value and next step**
 
-SlabScout shows how paid intelligence and programmable money combine: an agent can buy data, verify it, and lock USDC under strict user limits. The remaining live step is wiring real Circle Agent Wallet, x402 service, and Arc Testnet escrow deployment credentials.
+SlabScout shows how paid intelligence and programmable money combine: an agent can buy data, verify it, and lock USDC under strict user limits. The remaining live step is configuring Circle CLI login, Agent Wallet funding, the x402 MarketProof seller address/service URL, writable backend state, and the deployed Arc Testnet escrow contract, then running the manual live E2E to capture real evidence.

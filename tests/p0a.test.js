@@ -146,11 +146,11 @@ test('P0-A.2 invalid cert is a REJECT live signal, not replay fallback', async (
   }
 })
 
-test('P0-A.2 Renaiss 5xx fallback blocks payment and escrow', async () => withEnv({ MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_OPERATOR_TOKEN: 'op' }, async () => {
+test('P0-A.2 Renaiss 5xx fallback blocks payment and escrow', async () => withEnv({ MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_OPERATOR_TOKEN: 'op', SLABSCOUT_STATE_FILE: `/tmp/slabscout-test-${process.pid}-5xx.json` }, async () => {
   const prevFetch = global.fetch
   global.fetch = async (url) => ({ ok: false, status: 500, text: async () => 'server error', headers: { get: () => null }, url })
   try {
-    const result = await runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, authorization: DEFAULT_AUTHORIZATION, operatorAuthorized: true })
+    const result = await runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'live-5xx-test', authorization: DEFAULT_AUTHORIZATION, operatorAuthorized: true })
     assert.equal(result.signal.dataMode, 'REPLAY_FALLBACK')
     assert.equal(result.finalDecision.action, 'REJECT')
     assert.equal(result.payment, null)
@@ -185,32 +185,32 @@ test('P0-A.2 MarketProof verifier ignores caller verified flags and fails proof 
   const signal = await getReplaySignal({ offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION })
   const payment = replayPayment(runId, idempotencyKey)
   const proof = buildMarketProof({ signal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey })
-  const verified = verifyMarketProof({ proof, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })
+  const verified = await verifyMarketProof({ proof, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })
   assert.equal(verified.ok, true)
   assert.match(proof.proofHash, /^0x[a-fA-F0-9]{64}$/)
-  assert.equal(finalizeWithProof({ signal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, proof: verified.proof, proofVerification: verified, now: new Date(proof.generatedAt) }).action, 'RESERVE')
+  assert.equal((await finalizeWithProof({ signal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, proof: verified.proof, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).action, 'RESERVE')
 
   const randomHash = `0x${crypto.randomBytes(32).toString('hex')}`
-  assert.equal(verifyMarketProof({ proof: { proofKind: 'MarketProof', proofHash: randomHash, verified: true, verification: { ok: true } }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, signature: `hmac-sha256:${'a'.repeat(64)}` }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, askUsd: 94 }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, offerId: 'other-offer' }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, cardIdentity: { ...proof.cardIdentity, certNumber: '00000000' } }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, paymentReceipt: { ...proof.paymentReceipt, amountUsdc: 0.002 } }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, generatedAt: new Date(Date.now() + 120_000).toISOString() }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay' }).ok, false)
-  assert.equal(verifyMarketProof({ proof: { ...proof, sourceUpdatedAt: '2020-01-01T00:00:00.000Z' }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay' }).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { proofKind: 'MarketProof', proofHash: randomHash, verified: true, verification: { ok: true } }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, signature: `hmac-sha256:${'a'.repeat(64)}` }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, askUsd: 94 }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, offerId: 'other-offer' }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, cardIdentity: { ...proof.cardIdentity, certNumber: '00000000' } }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, paymentReceipt: { ...proof.paymentReceipt, amountUsdc: 0.002 } }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay', now: new Date(proof.generatedAt) })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, generatedAt: new Date(Date.now() + 120_000).toISOString() }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay' })).ok, false)
+  assert.equal((await verifyMarketProof({ proof: { ...proof, sourceUpdatedAt: '2020-01-01T00:00:00.000Z' }, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay' })).ok, false)
   const forgedMode = { ...proof, dataMode: 'replay' }
-  assert.equal(verifyMarketProof({ proof: forgedMode, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'live' }).ok, false)
+  assert.equal((await verifyMarketProof({ proof: forgedMode, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'live' })).ok, false)
 })
 
-test('P0-A.2 payment verifier rejects paid string, replay, asset, amount, and reused receipt errors', () => {
+test('P0-A.2 payment verifier rejects paid string, replay, asset, amount, and reused receipt errors', async () => {
   const runId = 'run_payment'
   const idempotencyKey = 'idem_payment'
   const badPaid = { ...replayPayment(runId, idempotencyKey), status: 'paid', providerStatus: 'confirmed', confirmed: false, simulated: false, replayAccepted: false, receiptId: 'live_receipt' }
-  assert.equal(verifyPaymentReceipt({ payment: badPaid, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' }).ok, false)
-  assert.equal(verifyPaymentReceipt({ payment: { ...replayPayment(runId, idempotencyKey), amountUsdc: 0.002 }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'replay' }).ok, false)
-  assert.equal(verifyPaymentReceipt({ payment: { ...replayPayment(runId, idempotencyKey), usdcAddress: '0x3600000000000000000000000000000000000001' }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'replay' }).ok, false)
-  assert.equal(verifyPaymentReceipt({ payment: replayPayment(runId, idempotencyKey), runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'replay', isReceiptUsed: () => true }).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: badPaid, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' })).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: { ...replayPayment(runId, idempotencyKey), amountUsdc: 0.002 }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'replay' })).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: { ...replayPayment(runId, idempotencyKey), usdcAddress: '0x3600000000000000000000000000000000000001' }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'replay' })).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: replayPayment(runId, idempotencyKey), runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'replay', isReceiptUsed: () => true })).ok, false)
 })
 
 test('P0-A live mode refuses default MarketProof signing secret', () => withEnv({ MARKET_PROOF_SIGNING_SECRET: undefined }, async () => {
@@ -280,4 +280,175 @@ test('P0-A.2 same idempotencyKey returns cached result and does not pay twice', 
   assert.equal(second.idempotentReplay, true)
   assert.equal(second.runId, first.runId)
   assert.equal(second.payment.receiptId, first.payment.receiptId)
+})
+
+function request(app, { method = 'POST', path = '/api/scout/run', body = {}, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const payload = JSON.stringify(body)
+      const req = require('node:http').request({
+        hostname: '127.0.0.1',
+        port: server.address().port,
+        path,
+        method,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...headers },
+      }, (res) => {
+        let data = ''
+        res.on('data', (chunk) => { data += chunk })
+        res.on('end', () => {
+          server.close(() => {
+            try { resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }) }
+            catch { resolve({ status: res.statusCode, body: data }) }
+          })
+        })
+      })
+      req.on('error', (error) => server.close(() => reject(error)))
+      req.write(payload)
+      req.end()
+    })
+  })
+}
+
+function scoutApp() {
+  const express = require('../backend/node_modules/express')
+  const scout = require('../backend/routes/scout')
+  const app = express()
+  app.use(express.json())
+  app.use('/api/scout', scout)
+  return app
+}
+
+test('P0-1 HTTP mode/auth regression: default live requires token before external calls', async () => withEnv({ SLABSCOUT_DEFAULT_MODE: 'live', SLABSCOUT_OPERATOR_TOKEN: 'correct', MARKET_PROOF_SIGNING_SECRET: 'live-test-secret' }, async () => {
+  const prevFetch = global.fetch
+  let called = false
+  global.fetch = async () => { called = true; throw new Error('should not call external') }
+  try {
+    const res = await request(scoutApp(), { body: { offerId: DEMO_OFFERS[0].id, idempotencyKey: 'http-default-live' } })
+    assert.equal(res.status, 401)
+    assert.equal(called, false)
+  } finally {
+    global.fetch = prevFetch
+  }
+}))
+
+test('P0-1 HTTP mode/auth regression: live-cache is rejected before Renaiss', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct', MARKET_PROOF_SIGNING_SECRET: 'live-test-secret' }, async () => {
+  const prevFetch = global.fetch
+  let called = false
+  global.fetch = async () => { called = true; throw new Error('should not call external') }
+  try {
+    const res = await request(scoutApp(), { body: { mode: 'live-cache', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'http-live-cache' } })
+    assert.equal(res.status, 400)
+    assert.equal(called, false)
+  } finally {
+    global.fetch = prevFetch
+  }
+}))
+
+test('P0-1 HTTP mode/auth regression: missing, wrong, and correct live tokens', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct', MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_DEFAULT_MODE: 'replay', SLABSCOUT_STATE_FILE: `/tmp/slabscout-test-${process.pid}-http-live.json` }, async () => {
+  const app = scoutApp()
+  const missing = await request(app, { body: { mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'missing-token' } })
+  assert.equal(missing.status, 401)
+  const wrong = await request(app, { body: { mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'wrong-token' }, headers: { 'x-slabscout-operator-token': 'wrong' } })
+  assert.equal(wrong.status, 403)
+
+  const prevFetch = global.fetch
+  global.fetch = async (url) => ({ ok: false, status: 500, text: async () => 'server error', headers: { get: () => null }, url })
+  try {
+    const correct = await request(app, { body: { mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'correct-token' }, headers: { 'x-slabscout-operator-token': 'correct' } })
+    assert.equal(correct.status, 200)
+    assert.equal(correct.body.signal.dataMode, 'REPLAY_FALLBACK')
+  } finally {
+    global.fetch = prevFetch
+  }
+}))
+
+test('P0-4 signed proofs with bad cert flags or targetCard mismatch are rejected', async () => {
+  const runId = 'run_bad_cert_flags'
+  const idempotencyKey = 'idem_bad_cert_flags'
+  const signal = await getReplaySignal({ offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION })
+  const payment = replayPayment(runId, idempotencyKey)
+  const certMismatchSignal = { ...signal, identity: { ...signal.identity, certMatchesOffer: false } }
+  const certMismatchProof = buildMarketProof({ signal: certMismatchSignal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey })
+  assert.equal((await verifyMarketProof({ proof: certMismatchProof, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay' })).ok, false)
+
+  const certMissingSignal = { ...signal, identity: { ...signal.identity, certFound: false } }
+  const certMissingProof = buildMarketProof({ signal: certMissingSignal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey })
+  assert.equal((await verifyMarketProof({ proof: certMissingProof, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey, expectedMode: 'replay' })).ok, false)
+
+  const proof = buildMarketProof({ signal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, payment, runId, idempotencyKey })
+  const badAuth = { ...DEFAULT_AUTHORIZATION, targetCard: 'Different target label' }
+  assert.equal((await verifyMarketProof({ proof, offer: DEMO_OFFERS[0], authorization: badAuth, payment, runId, idempotencyKey, expectedMode: 'replay' })).ok, false)
+  const fakeVerification = { ok: true, proofKind: 'MarketProof', proof: { ...proof, proofHash: `0x${'1'.repeat(64)}`, runId, offerId: DEMO_OFFERS[0].id, idempotencyKey } }
+  assert.equal((await finalizeWithProof({ signal, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, proof: { ...proof, proofHash: `0x${'1'.repeat(64)}` }, payment, runId, idempotencyKey, expectedMode: 'replay', proofVerification: fakeVerification })).action, 'REJECT')
+})
+
+test('P0-4 live payment verifier rejects attacker payer/payee and provider mismatch', async () => withEnv({
+  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001',
+}, async () => {
+  const runId = 'run_live_payment'
+  const idempotencyKey = 'idem_live_payment'
+  const livePayment = {
+    paymentKind: 'MarketProofPayment',
+    runId,
+    idempotencyKey,
+    offerId: DEMO_OFFERS[0].id,
+    targetItemId: DEMO_OFFERS[0].targetItemId,
+    targetHref: DEMO_OFFERS[0].targetHref,
+    payerWallet: '0xA9E0000000000000000000000000000000000001',
+    payeeService: 'circle-gateway-x402',
+    payeeAddress: '0x7000000000000000000000000000000000000001',
+    network: 'Arc Testnet',
+    chainId: 5042002,
+    asset: 'USDC',
+    usdcAddress: '0x3600000000000000000000000000000000000000',
+    amountUsdc: 0.001,
+    receiptId: 'settlement_live_test',
+    circlePaymentId: 'settlement_live_test',
+    txHash: `0x${'2'.repeat(64)}`,
+    paidAt: new Date().toISOString(),
+    providerStatus: 'settled',
+    confirmed: true,
+    simulated: false,
+    replayAccepted: false,
+  }
+  assert.equal((await verifyPaymentReceipt({ payment: livePayment, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' })).ok, true)
+  assert.equal((await verifyPaymentReceipt({ payment: { ...livePayment, payerWallet: '0xA9E0000000000000000000000000000000000002' }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' })).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: { ...livePayment, payeeAddress: '0x7000000000000000000000000000000000000002' }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' })).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: { ...livePayment, providerStatus: 'pending' }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' })).ok, false)
+  assert.equal((await verifyPaymentReceipt({ payment: { ...livePayment, providerNetwork: 'eip155:8453' }, runId, idempotencyKey, offer: DEMO_OFFERS[0], authorization: DEFAULT_AUTHORIZATION, expectedMode: 'live' })).ok, false)
+}))
+
+test('P0-5 live mode requires explicit idempotencyKey before external calls', async () => withEnv({ MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_OPERATOR_TOKEN: 'op' }, async () => {
+  const prevFetch = global.fetch
+  let called = false
+  global.fetch = async () => { called = true; throw new Error('should not call external') }
+  try {
+    await assert.rejects(() => runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, authorization: DEFAULT_AUTHORIZATION, operatorAuthorized: true }), /idempotencyKey/)
+    assert.equal(called, false)
+  } finally {
+    global.fetch = prevFetch
+  }
+}))
+
+
+test('P0-5 live mode requires writable state file before external calls', async () => withEnv({ MARKET_PROOF_SIGNING_SECRET: 'live-test-secret', SLABSCOUT_STATE_FILE: undefined }, async () => {
+  const prevFetch = global.fetch
+  let called = false
+  global.fetch = async () => { called = true; throw new Error('should not call external') }
+  try {
+    await assert.rejects(() => runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'missing-state', authorization: DEFAULT_AUTHORIZATION, operatorAuthorized: true }), /SLABSCOUT_STATE_FILE/)
+    assert.equal(called, false)
+  } finally {
+    global.fetch = prevFetch
+  }
+}))
+
+test('P0-5 concurrent live payment intents for same offer cannot both claim', async () => {
+  const stateStore = require('../backend/lib/state-store')
+  const first = stateStore.claimPaymentIntent({ runId: 'run_a', idempotencyKey: 'idem_a', offerId: DEMO_OFFERS[0].id, owner: 'operator:live', amountUsdc: 0.001, budgetImpact: true })
+  const second = stateStore.claimPaymentIntent({ runId: 'run_b', idempotencyKey: 'idem_b', offerId: DEMO_OFFERS[0].id, owner: 'operator:live', amountUsdc: 0.001, budgetImpact: true })
+  const results = await Promise.allSettled([first, second])
+  assert.equal(results.filter((item) => item.status === 'fulfilled').length, 1)
+  assert.equal(results.filter((item) => item.status === 'rejected').length, 1)
 })

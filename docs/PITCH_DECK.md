@@ -34,7 +34,7 @@ Live mode calls `/v1/graded/{cert}` first, then card detail, FMV series, and gra
 
 ## 6. Circle / Arc programmable money flow
 
-Circle/x402 payment is the paid intelligence step. The agent must bind runId, idempotencyKey, offerId, payer, payee, chain, USDC address, amount, provider confirmation, Circle payment ID or tx hash, and paidAt.
+Circle/x402 payment is the paid intelligence step. The live path uses Circle CLI plus the x402 seller middleware and must bind runId, idempotencyKey, offerId, payer, payee address, chain, USDC address, amount, provider confirmation, Circle payment ID or tx hash, and paidAt.
 
 Arc escrow is the commitment step. The contract locks a capped refundable USDC deposit and emits a `Reserved` event. UI only displays chain-confirmed after a real tx receipt and event match.
 
@@ -68,7 +68,7 @@ Start with collectible slabs because identity and appraisal are clear. Extend to
 - small paid oracle results;
 - cross-agent service purchases.
 
-Roadmap: real Circle Agent Wallet adapter, deployed Arc escrow, seller EIP-712 offers, database-backed authorization dashboard, multiple card categories.
+Roadmap: hosted Circle Agent Wallet integration beyond CLI, deployed Arc escrow with captured evidence, seller EIP-712 offers, database-backed authorization dashboard, multiple card categories.
 
 ## 10. Team / ask
 

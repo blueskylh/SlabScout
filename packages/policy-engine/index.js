@@ -1,4 +1,5 @@
 const { confidenceMeets, pctDiff, round } = require('../shared')
+const { verifyMarketProof } = require('../market-proof')
 
 function check(id, label, pass, details, severity = 'hard') {
   return { id, label, status: pass ? 'pass' : 'fail', severity, details }
@@ -36,8 +37,17 @@ function plannedIntelFee({ authorization, quality, proof, ignoreRefreshing }) {
   return needsProof ? configuredFee : 0
 }
 
-function proofIsVerified(_proof, proofVerification) {
-  return Boolean(proofVerification && proofVerification.ok === true && proofVerification.proofKind === 'MarketProof')
+function proofIsVerified(proof, proofVerification) {
+  return Boolean(
+    proof &&
+    proofVerification &&
+    proofVerification.ok === true &&
+    proofVerification.proofKind === 'MarketProof' &&
+    proofVerification.proof?.proofHash === proof.proofHash &&
+    proofVerification.proof?.runId === proof.runId &&
+    proofVerification.proof?.offerId === proof.offerId &&
+    proofVerification.proof?.idempotencyKey === proof.idempotencyKey
+  )
 }
 
 function evaluateSignal({ signal, offer, authorization, now = new Date(), ignoreRefreshing = false, proof = null, proofVerification = null }) {
@@ -133,7 +143,8 @@ function buildExplanation(action, hardFails, warnings) {
   return `拒绝：${hardFails.map((item) => item.label).join('、')}。`
 }
 
-function finalizeWithProof({ signal, offer, authorization, proof, proofVerification, now = new Date() }) {
+async function finalizeWithProof({ signal, offer, authorization, proof, payment, runId, idempotencyKey, expectedMode, now = new Date(), isReceiptUsed, expectedPayerWallet, expectedPayeeAddress }) {
+  const proofVerification = await verifyMarketProof({ proof, offer, authorization, payment, runId, idempotencyKey, expectedMode: expectedMode || signal.dataMode, now, isReceiptUsed, expectedPayerWallet, expectedPayeeAddress })
   if (!proofIsVerified(proof, proofVerification)) {
     return {
       action: 'REJECT',

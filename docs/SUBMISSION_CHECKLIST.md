@@ -19,9 +19,11 @@
 
 ## Circle / x402 evidence
 
+- [ ] Circle CLI installed/logged in on backend host
 - [ ] Circle Agent Wallet configured
-- [ ] Arc Testnet USDC balance verified
+- [ ] Arc Testnet USDC Gateway/wallet balance verified
 - [ ] x402 MarketProof service URL configured
+- [ ] MarketProof seller address configured
 - [ ] Payment amount exactly `0.001 USDC`
 - [ ] Receipt binds runId/idempotencyKey/offerId/target/payee/chain/asset/amount
 - [ ] Provider status confirmed/settled
@@ -33,11 +35,14 @@
 - [x] Seller C: REJECT, zero payment
 - [x] Invalid cert: REJECT, no fallback
 - [x] Renaiss 5xx fallback: no payment, no escrow
+- [x] Invalid mode/live-cache rejected before external calls
+- [x] Missing or wrong live operator token rejected before external calls
+- [x] Live run requires explicit idempotencyKey
 - [x] Replay never displays real paid/reserved/tx evidence
 
 ## Tests and CI
 
-- [x] Node unit tests
+- [x] Node unit tests — 25/25 passing locally
 - [x] Backend/source syntax lint
 - [x] Frontend ESLint
 - [x] TypeScript type-check
@@ -46,7 +51,8 @@
 - [x] Secret scan
 - [x] Foundry project files and tests added
 - [ ] Foundry tests run in local environment: **blocked here because `forge` is not installed**
-- [ ] CI green after push: **待 GitHub Actions run**
+- [ ] CI green after push: **待本轮 push 后 GitHub Actions run**
+- [ ] Manual live E2E: readiness-only by default; spending run requires `confirm_spend=I_UNDERSTAND_SPEND_TESTNET_USDC`
 
 ## Documentation
 
@@ -64,7 +70,7 @@
 - [ ] Funded Arc Testnet USDC wallet
 - [ ] x402 MarketProof service endpoint/payee
 - [ ] Deployed Arc Testnet escrow contract
-- [ ] Persistent production database or state file path
+- [ ] Writable single-instance `SLABSCOUT_STATE_FILE` or future database implementation
 - [ ] Public deployment URL
 - [ ] 3-minute video
 - [ ] Real transaction/explorer evidence

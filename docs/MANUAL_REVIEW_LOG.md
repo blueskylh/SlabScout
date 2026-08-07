@@ -69,3 +69,14 @@ This pass implemented all safety work that does not require external Circle cred
 8. **CI/docs pass** — added backend smoke, secret scan, Foundry CI steps, manual live workflow, and the architecture/threat/deployment/demo/deck/submission docs.
 
 Known boundary: real Circle Agent Wallet/x402 and real Arc reserve remain fail-closed until external credentials, Testnet USDC, a deployed escrow address, and persistent production state are provided.
+
+## P0-1 live MVP continuation pass
+
+This pass continued from baseline `ccc4d519fc9c7d9f6fbb07bd00a9da7a303af03b` and focused on live-mode boundaries that can be implemented without spending funds in CI.
+
+1. **Mode/auth pass** — added a single effective-mode resolver, rejected `live-cache`/invalid public modes, and required operator auth even when live comes from the server default rather than the request body.
+2. **State/idempotency pass** — expanded the state store with payment intents and single-instance file persistence, removed `DATABASE_URL` as a pretend persistence backend, required live idempotency keys, and added offer-level live payment intent locking.
+3. **x402 seller pass** — refactored `/api/market-proof/prove` into a live seller endpoint protected by Circle Gateway x402 middleware; the endpoint rejects client market data and refetches Renaiss server-side before signing.
+4. **Circle CLI buyer pass** — added a bounded `execFile` Circle CLI wrapper for `services pay`, Gateway balance/status helpers, and wallet contract execution, with sanitized output and reconciliation-required handling for unknown results.
+5. **Arc RPC pass** — added Arc chain ID checks, USDC allowance reads, reservation reads, tx receipt polling, and `Reserved` event validation before marking escrow chain-confirmed.
+6. **Regression pass** — added HTTP and verifier tests for mode bypass, live operator token handling, idempotency requirements, bad cert flags, targetCard mismatch, bad live payer/payee/provider status, and concurrent live payment intent locking.

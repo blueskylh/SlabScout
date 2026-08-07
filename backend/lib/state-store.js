@@ -1,11 +1,11 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const DAY_MS = 86_400_000
 const DEFAULT_STATE = Object.freeze({
   authorizations: {},
   runs: {},
   idempotency: {},
+  paymentIntents: {},
   payments: {},
   proofs: {},
   reservations: {},
@@ -24,12 +24,30 @@ function stateFile() {
   return process.env.SLABSCOUT_STATE_FILE || null
 }
 
+function persistenceBackend() {
+  return stateFile() ? 'single-instance-file' : 'memory-replay-only'
+}
+
 function persistentStoreConfigured() {
-  return Boolean(stateFile() || process.env.DATABASE_URL)
+  return Boolean(stateFile())
 }
 
 function ensureDir(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
+}
+
+function stateFileWritable() {
+  const file = stateFile()
+  if (!file) return false
+  try {
+    ensureDir(file)
+    const probe = `${file}.${process.pid}.probe`
+    fs.writeFileSync(probe, 'ok')
+    fs.rmSync(probe)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function loadState() {
@@ -96,14 +114,32 @@ async function claimIdempotency({ runId, idempotencyKey, offerId, mode }) {
       return { claimed: false, existingRun: existing }
     }
     state.idempotency[idempotencyKey] = runId
-    state.runs[runId] = { runId, idempotencyKey, offerId, mode, status: 'started', startedAt: new Date().toISOString() }
+    state.runs[runId] = { runId, idempotencyKey, offerId, mode, status: 'created', stages: [{ status: 'created', at: new Date().toISOString() }], startedAt: new Date().toISOString() }
     return { claimed: true }
+  })
+}
+
+async function markRunStage(runId, status, extra = {}) {
+  return withState((state) => {
+    const run = state.runs[runId] || { runId, stages: [] }
+    run.status = status
+    run.stages = [...(run.stages || []), { status, at: new Date().toISOString(), ...extra }]
+    state.runs[runId] = run
+    return run
+  })
+}
+
+async function saveAuthorizationSnapshot({ runId, owner, authorization }) {
+  return withState((state) => {
+    state.authorizations[runId] = { runId, owner, authorization, savedAt: new Date().toISOString() }
+    return state.authorizations[runId]
   })
 }
 
 async function saveRunResult(runId, result) {
   return withState((state) => {
-    state.runs[runId] = { ...(state.runs[runId] || {}), runId, offerId: result.offer?.id, mode: result.mode, status: result.status, result, savedAt: new Date().toISOString() }
+    const existing = state.runs[runId] || {}
+    state.runs[runId] = { ...existing, runId, offerId: result.offer?.id, mode: result.mode, status: result.executionStatus, result, savedAt: new Date().toISOString() }
     return state.runs[runId]
   })
 }
@@ -119,6 +155,7 @@ async function reserveBudget({ runId, owner, amountUsdc, dailyBudgetUsdc, budget
       throw error
     }
     state.budgetHolds[runId] = { runId, owner, amountUsdc: Number(amountUsdc), status: 'held', createdAt: now.toISOString() }
+    if (state.runs[runId]) state.runs[runId].status = 'budget-held'
     return { held: true, current, amountUsdc: Number(amountUsdc) }
   })
 }
@@ -130,6 +167,36 @@ async function releaseBudget(runId, status = 'released') {
   })
 }
 
+async function claimPaymentIntent({ runId, idempotencyKey, offerId, owner, amountUsdc, budgetImpact = false }) {
+  return withState((state) => {
+    const existingForKey = state.paymentIntents[idempotencyKey]
+    if (existingForKey && existingForKey.runId !== runId) {
+      const error = new Error('payment intent already exists for idempotencyKey')
+      error.statusCode = 409
+      throw error
+    }
+    if (budgetImpact) {
+      const existingForOffer = Object.values(state.paymentIntents).find((intent) => intent.offerId === offerId && intent.status !== 'failed' && intent.runId !== runId)
+      const paidForOffer = Object.values(state.payments).find((payment) => payment.offerId === offerId && payment.budgetImpact === true && payment.runId !== runId)
+      if (existingForOffer || paidForOffer) {
+        const error = new Error('offer already has a live MarketProof payment intent')
+        error.statusCode = 409
+        throw error
+      }
+    }
+    state.paymentIntents[idempotencyKey] = { runId, idempotencyKey, offerId, owner, amountUsdc, status: 'payment-submitting', updatedAt: new Date().toISOString() }
+    if (state.runs[runId]) state.runs[runId].status = 'payment-submitting'
+    return state.paymentIntents[idempotencyKey]
+  })
+}
+
+async function updatePaymentIntent(idempotencyKey, status, extra = {}) {
+  return withState((state) => {
+    if (state.paymentIntents[idempotencyKey]) state.paymentIntents[idempotencyKey] = { ...state.paymentIntents[idempotencyKey], status, updatedAt: new Date().toISOString(), ...extra }
+    return state.paymentIntents[idempotencyKey] || null
+  })
+}
+
 async function recordPayment(payment, { owner = 'demo-operator', budgetImpact = false } = {}) {
   return withState((state) => {
     if (payment.receiptId && state.payments[payment.receiptId] && state.payments[payment.receiptId].runId !== payment.runId) {
@@ -137,14 +204,12 @@ async function recordPayment(payment, { owner = 'demo-operator', budgetImpact = 
       error.statusCode = 409
       throw error
     }
-    if (budgetImpact && Object.values(state.payments).some((row) => row.offerId === payment.offerId && row.budgetImpact === true)) {
+    if (budgetImpact && Object.values(state.payments).some((row) => row.offerId === payment.offerId && row.budgetImpact === true && row.runId !== payment.runId)) {
       const error = new Error('offer already has a live MarketProof payment')
       error.statusCode = 409
       throw error
     }
-    if (payment.receiptId) {
-      state.payments[payment.receiptId] = { ...payment, owner, budgetImpact, savedAt: new Date().toISOString() }
-    }
+    if (payment.receiptId) state.payments[payment.receiptId] = { ...payment, owner, budgetImpact, savedAt: new Date().toISOString() }
     return payment.receiptId ? state.payments[payment.receiptId] : null
   })
 }
@@ -152,6 +217,7 @@ async function recordPayment(payment, { owner = 'demo-operator', budgetImpact = 
 async function recordProof(proof) {
   return withState((state) => {
     state.proofs[proof.proofHash] = { ...proof, savedAt: new Date().toISOString() }
+    if (proof.runId && state.runs[proof.runId]) state.runs[proof.runId].status = 'proof-verified'
     return state.proofs[proof.proofHash]
   })
 }
@@ -175,6 +241,33 @@ async function isReceiptUsed(receiptId, { runId, offerId } = {}) {
   })
 }
 
+async function recordAudit(row) {
+  return withState((state) => {
+    state.audit.unshift(row)
+    state.audit = state.audit.slice(0, 500)
+    return row
+  })
+}
+
+function redactAudit(row) {
+  return {
+    auditId: row.auditId,
+    savedAt: row.savedAt,
+    runId: row.runId,
+    offerId: row.offerId,
+    policyVersion: row.policyVersion,
+    action: row.action,
+    executionStatus: row.executionStatus,
+    proofKind: row.proofKind,
+    proofHash: row.proofHash,
+    escrowTxHash: row.escrowTxHash || null,
+  }
+}
+
+async function listAudits({ redacted = true } = {}) {
+  return withState((state) => (state.audit || []).slice(0, 500).map((row) => redacted ? redactAudit(row) : row))
+}
+
 function resetStateForTests() {
   memoryState = clone(DEFAULT_STATE)
   const file = stateFile()
@@ -182,15 +275,24 @@ function resetStateForTests() {
 }
 
 module.exports = {
+  persistenceBackend,
   persistentStoreConfigured,
+  stateFile,
+  stateFileWritable,
   claimIdempotency,
+  markRunStage,
+  saveAuthorizationSnapshot,
   saveRunResult,
   reserveBudget,
   releaseBudget,
+  claimPaymentIntent,
+  updatePaymentIntent,
   recordPayment,
   recordProof,
   recordReservation,
   isReceiptUsed,
+  recordAudit,
+  listAudits,
   resetStateForTests,
   activeDailySpend,
 }

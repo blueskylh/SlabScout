@@ -35,26 +35,26 @@ docs/                    Architecture, threat model, deployment, demo, deck, che
 
 ## Current implementation status
 
-Implemented after baseline `c14a5b4`:
+Implemented after baseline `c14a5b4` and hardened further on `final/agentic-economy-mvp`:
 
 - Real demo identity: PSA cert `80396943`, itemId `6e7fdc9a-8054-4034-bc02-8fb64209c688`, href `/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a`.
 - Live Renaiss mode is cert-first and treats returned `itemId` + `card.href` as identity truth.
 - `400 / 401 / 404` cert errors are hard `REJECT`, not replay fallback.
 - Network/5xx Renaiss fallback is `REPLAY_FALLBACK` and blocks payment/proof/escrow.
 - Public `/api/scout/run` accepts only trusted `offerId`; `body.offer` is rejected.
-- Live `/api/scout/run` requires an operator token with timing-safe comparison before any paid/live action.
+- Live `/api/scout/run` requires an operator token with timing-safe comparison before any Renaiss, Circle, or Arc call; invalid public modes such as `live-cache` are rejected.
 - MarketProof verifier ignores caller-supplied `verified` / `verification.ok`; it recalculates canonical hash, HMAC, offer/cert/payment/TTL/mode bindings.
 - Payment verifier rejects `status=paid` unless provider confirmation, receipt/tx, chain, asset, payer/payee, idempotency and amount bindings pass.
 - Replay payment uses `replay-payment-simulated`, `confirmed=false`, `simulated=true`; replay escrow uses `chainConfirmed=false` and no tx/explorer evidence.
 - `requireMarketProof=false` uses independent `PolicyProof`, not MarketProof.
-- Server-side state store covers idempotency, payment/proof/reservation records and budget holds. Live execution fails closed if persistent state is not configured.
+- Server-side state store covers idempotency, payment intents, payment/proof/reservation records, audit records and budget holds. Live execution fails closed unless a writable single-instance `SLABSCOUT_STATE_FILE` is configured.
 - Foundry contract project, deployment script and escrow tests were added.
 - CI includes deterministic frontend/backend install, Node tests, lint, frontend checks, build, backend smoke, Foundry build/test and secret scan.
 
 Not yet complete because external credentials/funds/deployment are missing:
 
-- Real Circle Agent Wallet/x402 payment adapter is fail-closed until Circle credentials, wallet, x402 MarketProof service and Testnet USDC are provided.
-- Real Arc escrow reserve execution is fail-closed until the escrow contract is deployed and Agent Wallet approve/reserve execution is configured.
+- Real Circle Agent Wallet/x402 payment is wired through Circle CLI + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured.
+- Real Arc escrow reserve is wired through Circle CLI `approve`/`reserve` plus Arc RPC receipt/event verification, but remains unavailable until the escrow contract is deployed and the wallet is funded/authorized.
 - Public MVP URL, video, deck export link and real tx evidence are pending user/deployment steps.
 
 ## Demo paths
@@ -79,11 +79,11 @@ Required for local replay:
 Required for live readiness:
 
 - `SLABSCOUT_OPERATOR_TOKEN`
-- `SLABSCOUT_STATE_FILE` or `DATABASE_URL`
+- `SLABSCOUT_STATE_FILE` — current live persistence is single-instance file state; `DATABASE_URL` is not implemented in this MVP
 - `RENAISS_API_KEY` / `RENAISS_API_SECRET`
 - `MARKET_PROOF_SIGNING_SECRET` / `POLICY_PROOF_SIGNING_SECRET`
-- `CIRCLE_API_KEY`, Agent Wallet address, x402 MarketProof service/payee
-- `RESERVATION_ESCROW_ADDRESS`, `AGENT_WALLET_ADDRESS`
+- Circle CLI installed/logged in, `CIRCLE_AGENT_WALLET_ADDRESS`, `MARKET_PROOF_SERVICE_URL`, `MARKET_PROOF_SELLER_ADDRESS`
+- `RESERVATION_ESCROW_ADDRESS`, `AGENT_WALLET_ADDRESS`, `ARC_RPC_URL`
 
 Renaiss and Circle secrets must remain backend-only. Do not create `VITE_` variables for them.
 
@@ -130,7 +130,9 @@ This execution environment does not have `forge` installed; contract tests are c
 - `POST /api/scout/run` — full orchestration. Public replay; live requires `x-slabscout-operator-token`.
 - `GET /api/scout/audits` — audit trail.
 - `GET /api/market-proof/quote` — proof service quote.
-- `POST /api/market-proof/prove` — server-refetch proof generation; rejects client-submitted signal/valuation/trades.
+- `POST /api/market-proof/prove` — live x402 seller endpoint; uses Circle Gateway middleware, refetches Renaiss server-side, and rejects client-submitted signal/valuation/trades.
+
+Manual `live:e2e` is available for a deployed MVP; the GitHub workflow is readiness-only unless explicitly dispatched with `confirm_spend=I_UNDERSTAND_SPEND_TESTNET_USDC`.
 
 ## Contract
 
@@ -150,6 +152,6 @@ This execution environment does not have `forge` installed; contract tests are c
 ## Security notes
 
 - Replay/mock never returns real `paid`, `reserved`, tx hash, block number, or explorer evidence.
-- Live mode fails closed when operator token, persistent state, Circle config, Renaiss secrets, escrow address, wallet, or Arc Testnet checks are missing.
+- Live mode fails closed when operator token, writable state file, Circle CLI/session/config, Renaiss secrets, escrow address, wallet funding/allowance, or Arc Testnet checks are missing.
 - Secret scan blocks committed Renaiss/Circle/private keys.
 - Mainnet is not supported.
