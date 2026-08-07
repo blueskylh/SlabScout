@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'final/**']
   pull_request:
     branches: [main]
 
@@ -14,15 +14,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install backend dependencies
+        run: npm --prefix backend ci --no-audit --no-fund
       - name: Install frontend dependencies
-        run: npm --prefix frontend install --no-audit --no-fund
-      - name: Unit tests
+        run: npm --prefix frontend ci --no-audit --no-fund
+      - name: Secret scan
+        run: npm run secret-scan
+      - name: Node unit tests
         run: npm test
-      - name: Source lint
+      - name: Backend/source syntax lint
         run: npm run lint
       - name: Frontend lint
         run: npm --prefix frontend run lint
       - name: Type check
         run: npm run type-check
-      - name: Build
+      - name: Frontend production build
         run: BACKEND_PORT=3001 BASE_PATH=/ npm run build
+      - name: Backend smoke tests
+        run: BACKEND_PORT=3001 BASE_PATH=/ npm run smoke:backend
+      - name: Foundry build
+        run: forge build
+        working-directory: contracts
+      - name: Foundry tests
+        run: forge test -vvv
+        working-directory: contracts

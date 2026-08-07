@@ -54,3 +54,18 @@ This pass was limited to the requested correctness fixes and intentionally did n
 4. **Policy/budget pass** — re-read hard gates and budget math; `requireMarketProof=false` no longer budgets the 0.001 USDC intel fee, and `finalizeWithProof` only accepts verified proofs.
 5. **State-machine pass** — re-read orchestration and adapters so replay takes priority over live Circle/Arc env, `REPLAY_FALLBACK` blocks real payment, unknown offers do not fall back to Seller A, and replay execution status is not displayed as real success.
 6. **Config/docs/CI pass** — re-read runtime validation, env examples, README copy, Circle CLI syntax, and added GitHub Actions coverage for test/lint/type-check/build.
+
+## Final MVP hardening pass
+
+This pass implemented all safety work that does not require external Circle credentials, funded Arc Testnet wallet, live x402 service, deployed escrow address, or production database.
+
+1. **Proof trust-boundary pass** — re-read MarketProof, PolicyProof, policy finalize, and escrow adapter code. `verified`/`verification.ok` are now display-only fields; execution boundaries recompute canonical hashes, HMAC signatures, mode, offer/cert/payment/TTL bindings.
+2. **Payment trust-boundary pass** — replay payments now use `simulated/replayAccepted` with `confirmed=false`; the verifier rejects `status=paid` without provider confirmation and full receipt binding.
+3. **Public API pass** — `/api/scout/run` rejects arbitrary `body.offer`, uses trusted offer IDs only, adds live operator-token protection, and rate-limits requests.
+4. **Renaiss data pass** — source freshness no longer uses cert lookup time as market data freshness; fallback remains explicitly blocked from payment and escrow.
+5. **State/idempotency pass** — added server-side state store for idempotency, budget holds, payment/proof/reservation records, and fail-closed live persistence checks.
+6. **Frontend truthfulness pass** — split MarketProof and PolicyProof display, fixed Seller B color logic, removed default INVESTIGATE before run, and kept replay/confirmed states distinct.
+7. **Contract pass** — converted the Solidity fixture into a Foundry project with SafeERC20-style transfer checks, deployment script, and coverage for reserve/release/refund failure modes.
+8. **CI/docs pass** — added backend smoke, secret scan, Foundry CI steps, manual live workflow, and the architecture/threat/deployment/demo/deck/submission docs.
+
+Known boundary: real Circle Agent Wallet/x402 and real Arc reserve remain fail-closed until external credentials, Testnet USDC, a deployed escrow address, and persistent production state are provided.
