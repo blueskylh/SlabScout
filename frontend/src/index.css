@@ -312,3 +312,54 @@
     --spacing-128: 64px;
   }
 }
+
+@layer components {
+  .field-label {
+    display: grid;
+    gap: 0.45rem;
+    color: var(--fg-subtle);
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+
+  .field-input {
+    width: 100%;
+    border-radius: 16px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-chat);
+    padding: 0.75rem 0.85rem;
+    color: var(--fg-base);
+    font-size: 0.92rem;
+    font-weight: 800;
+    outline: none;
+  }
+
+  .field-input:focus {
+    border-color: var(--brand-100);
+    box-shadow: 0 0 0 3px var(--brand-10);
+  }
+
+  .decision-metric {
+    display: grid;
+    gap: 0.3rem;
+    border-radius: 18px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-chat);
+    padding: 0.9rem;
+  }
+
+  .decision-metric span {
+    color: var(--fg-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .decision-metric strong {
+    color: var(--fg-base);
+    font-size: 1.1rem;
+    font-weight: 900;
+  }
+}

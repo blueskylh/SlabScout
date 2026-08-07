@@ -1,24 +1,173 @@
-const SURF_LOGO_PATH = "M14.6875 13.333C15.0977 13.333 15.4859 13.5196 15.7422 13.8398L17.8721 16.502C17.9009 16.538 17.9308 16.5721 17.9619 16.6035C18.3091 16.9542 18.7529 17.3405 18.7529 17.834C18.7528 18.3399 18.3428 18.75 17.8369 18.75H17.5713C17.2123 18.75 16.8727 18.5869 16.6484 18.3066L15.4678 16.8311C14.761 15.9479 13.3369 16.4478 13.3369 17.5791V18.6494C13.3369 18.7062 13.2882 18.75 13.2314 18.75H11.3584C10.7127 18.75 10.1016 18.4564 9.69824 17.9521L8.80176 16.8311C8.09497 15.9477 6.66993 16.4478 6.66992 17.5791V18.6494C6.66991 18.7062 6.62124 18.75 6.56445 18.75H4.69141C4.04589 18.75 3.43548 18.4562 3.03223 17.9521L2.13477 16.8311C1.77885 16.3862 1.25293 15.931 1.25293 15.3613V13.4395C1.253 13.3822 1.29729 13.3331 1.35449 13.333C1.7646 13.3332 2.15295 13.5196 2.40918 13.8398L4.53809 16.502C5.24478 17.3853 6.66962 16.886 6.66992 15.7549V14.6836C6.67018 13.9379 7.27483 13.3332 8.02051 13.333C8.43065 13.333 8.81884 13.5197 9.0752 13.8398L11.2051 16.502C11.9097 17.3827 13.3282 16.8887 13.3369 15.7646V14.6836C13.3372 13.9378 13.9417 13.3331 14.6875 13.333ZM14.6875 6.66699C15.0978 6.66702 15.4859 6.85347 15.7422 7.17383L17.8721 9.83594C18.2276 10.2801 18.7526 10.7339 18.7529 11.3027V13.2266C18.7528 13.2833 18.7091 13.333 18.6523 13.333C18.2421 13.3329 17.8539 13.1465 17.5977 12.8262L15.4678 10.1641C14.7609 9.28113 13.3369 9.78089 13.3369 10.9121V11.9824C13.3369 12.7282 12.7321 13.3328 11.9863 13.333C11.5761 13.3329 11.187 13.1465 10.9307 12.8262L8.80176 10.1641C8.09497 9.28072 6.66993 9.78076 6.66992 10.9121V11.9824C6.66992 12.7284 6.06525 13.3329 5.31934 13.333C4.90908 13.3329 4.52094 13.1465 4.26465 12.8262L2.13477 10.1641C1.7788 9.71925 1.25293 9.26403 1.25293 8.69434V6.77344C1.253 6.71621 1.29728 6.6671 1.35449 6.66699C1.76461 6.66714 2.15295 6.85359 2.40918 7.17383L4.53809 9.83594C5.24487 10.7193 6.66989 10.2192 6.66992 9.08789V8.01758C6.66992 7.27168 7.27467 6.66722 8.02051 6.66699C8.43082 6.66699 8.81885 6.85345 9.0752 7.17383L11.2051 9.83594C11.9097 10.7163 13.3279 10.2223 13.3369 9.09863V8.01758C13.3369 7.27161 13.9416 6.6671 14.6875 6.66699ZM2.43555 1.25C2.79488 1.25 3.13499 1.41367 3.35938 1.69434L4.53809 3.16895C5.24485 4.05241 6.66991 3.55228 6.66992 2.4209V1.35059C6.66993 1.29391 6.71874 1.25017 6.77539 1.25H8.64844C9.29394 1.25 9.90438 1.5438 10.3076 2.04785L11.2051 3.16895C11.9097 4.04967 13.3282 3.55564 13.3369 2.43164V1.35059C13.3369 1.29391 13.3857 1.25017 13.4424 1.25H15.3154C15.9609 1.25 16.5714 1.5438 16.9746 2.04785L17.8721 3.16895C18.2275 3.61314 18.7526 4.06689 18.7529 4.63574V6.56055C18.7528 6.61728 18.7091 6.66699 18.6523 6.66699C18.2421 6.66688 17.8539 6.4795 17.5977 6.15918L15.4678 3.49805C14.761 2.61474 13.3371 3.11388 13.3369 4.24512V5.31543C13.3369 6.06126 12.7321 6.66673 11.9863 6.66699C11.5761 6.66693 11.187 6.47955 10.9307 6.15918L8.80176 3.49805C8.095 2.61474 6.67006 3.11388 6.66992 4.24512V5.31543C6.66992 6.06137 6.06525 6.66691 5.31934 6.66699C4.90908 6.66693 4.52094 6.47955 4.26465 6.15918L2.13477 3.49805C2.10558 3.46158 2.07543 3.42725 2.04395 3.39551C1.6966 3.04528 1.25293 2.6583 1.25293 2.16504C1.25317 1.65963 1.66348 1.25 2.16895 1.25H2.43555Z"
+import { useEffect, useMemo, useState } from 'react'
+import { AuthorizationPanel } from './components/AuthorizationPanel'
+import { DecisionPanel } from './components/DecisionPanel'
+import { MetricCard } from './components/MetricCard'
+import { OfferSelector } from './components/OfferSelector'
+import { ProofAndEscrow } from './components/ProofAndEscrow'
+import { SignalPanel } from './components/SignalPanel'
+import { StatusPill } from './components/StatusPill'
+import { Timeline } from './components/Timeline'
+import { getDemoConfig, runScout } from './lib/api'
+import type { Authorization, DemoConfig, Offer, ScoutRunResult } from './lib/types'
 
-function SurfLogo() {
-  return (
-    <svg width="40" height="40" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d={SURF_LOGO_PATH} fill="var(--fg-base, #212121)" />
-    </svg>
-  )
+const FALLBACK_AUTHORIZATION: Authorization = {
+  targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
+  maxOfferUsd: 360,
+  maxPriceVsMedianPct: 90,
+  minConfidence: 'high',
+  minSourceCount: 2,
+  minObservationCount: 5,
+  maxLastSaleAgeDays: 14,
+  maxMethodDeviationPct: 15,
+  maxIntelFeeUsdc: 0.01,
+  maxDepositUsdc: 0.5,
+  dailyBudgetUsdc: 1,
+  spentTodayUsdc: 0,
+  requireMarketProof: true,
 }
 
-// Frontend API calls should use `src/lib/api.ts`, not absolute `/api/...` URLs.
+const FALLBACK_OFFERS: Offer[] = [
+  {
+    id: 'offer-charizard-350',
+    title: 'Seller A · clean discount',
+    askUsd: 350,
+    depositUsdc: 0.1,
+    sellerAddress: '0x5000000000000000000000000000000000000001',
+    expiresAt: '2026-08-09T10:00:00.000Z',
+    imageConfidence: 'high',
+    certFound: true,
+    narrative: '报价约低于 7 日中位价 11%，用于展示自动付费深查 + Arc 订金锁定。',
+  },
+]
+
 export default function App() {
+  const [demo, setDemo] = useState<DemoConfig | null>(null)
+  const [authorization, setAuthorization] = useState<Authorization>(FALLBACK_AUTHORIZATION)
+  const [selectedOfferId, setSelectedOfferId] = useState(FALLBACK_OFFERS[0].id)
+  const [mode, setMode] = useState<'replay' | 'live'>('replay')
+  const [result, setResult] = useState<ScoutRunResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getDemoConfig()
+      .then((config) => {
+        if (cancelled) return
+        setDemo(config)
+        setAuthorization(config.defaultAuthorization)
+        setSelectedOfferId(config.offers[0]?.id || FALLBACK_OFFERS[0].id)
+      })
+      .catch((err) => setError(err.message))
+    return () => { cancelled = true }
+  }, [])
+
+  const offers = demo?.offers || FALLBACK_OFFERS
+  const selectedOffer = useMemo(() => offers.find((offer) => offer.id === selectedOfferId) || offers[0], [offers, selectedOfferId])
+
+  async function execute() {
+    if (!selectedOffer) return
+    setLoading(true)
+    setError(null)
+    try {
+      const next = await runScout({ mode, offerId: selectedOffer.id, authorization })
+      setResult(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const signal = result?.signal || demo?.replaySignal
+  const finalAction = result?.finalDecision.action || 'INVESTIGATE'
+
   return (
-    <div data-surf-placeholder className="min-h-screen flex flex-col items-center justify-center gap-4 rounded-[14px]" style={{ background: 'var(--bg-chat-nav, #f4f4f4)', border: '1px solid var(--border-strong, rgba(42,42,42,0.08))' }}>
-      <SurfLogo />
-      <h1 className="font-black text-[36px] leading-[44px] text-[var(--fg-base,#212121)]">
-        GM, Builder<span style={{ color: 'var(--brand-100, #ff2882)' }}>.</span>
-      </h1>
-      <p className="text-xl leading-7 text-[var(--fg-subtle,#7a7a7a)]">
-        Start your crypto project here!
-      </p>
-    </div>
+    <main className="min-h-screen bg-bg-chat text-fg-base">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 md:px-8 md:py-10">
+        <header className="overflow-hidden rounded-[32px] border border-border-strong bg-bg-base p-6 shadow-sm md:p-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="mb-4 flex flex-wrap gap-2">
+                <StatusPill tone={finalAction}>{result ? finalAction : 'READY'}</StatusPill>
+                <StatusPill tone="warn">Arc Testnet</StatusPill>
+                <StatusPill tone="pass">Renaiss backend-only</StatusPill>
+              </div>
+              <h1 className="text-4xl font-black tracking-tight text-fg-base md:text-6xl">
+                SlabScout<span className="text-brand-100">.</span>
+              </h1>
+              <p className="mt-4 max-w-2xl text-lg leading-8 text-fg-subtle">
+                一个会先买市场证明、再自主锁定卡牌交易订金的 USDC 代理。用户只授权一次，之后由确定性规则引擎决定是否支付。
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 rounded-3xl border border-border-strong bg-bg-chat p-4 md:min-w-80">
+              <div className="grid grid-cols-2 gap-2 rounded-2xl bg-bg-subtle p-1">
+                {(['replay', 'live'] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setMode(item)}
+                    className={`rounded-xl px-4 py-2 text-sm font-black transition ${mode === item ? 'bg-bg-base text-brand-100 shadow-sm' : 'text-fg-subtle hover:text-fg-base'}`}
+                  >
+                    {item.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={execute}
+                disabled={loading}
+                className="rounded-2xl bg-brand-100 px-5 py-3 text-sm font-black text-white shadow-lg shadow-pink-500/20 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? 'Agent running…' : 'Run SlabScout Agent'}
+              </button>
+              <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；失败自动回放固定快照，保证演示稳定。</p>
+            </div>
+          </div>
+        </header>
+
+        {error ? (
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-600">{error}</div>
+        ) : null}
+
+        <section className="grid gap-4 md:grid-cols-4">
+          <MetricCard label="Proof fee" value="0.001 USDC" helper="Circle nanopayment demo adapter" />
+          <MetricCard label="Demo deposit" value={`${selectedOffer?.depositUsdc || 0.1} USDC`} helper="Arc escrow reserve amount" />
+          <MetricCard label="Offer ask" value={`$${selectedOffer?.askUsd || 0}`} helper={selectedOffer?.title || 'Seller offer'} />
+          <MetricCard label="Policy" value="V1.0" helper="pure deterministic checks" />
+        </section>
+
+        <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+          <AuthorizationPanel authorization={authorization} onChange={setAuthorization} />
+          <OfferSelector offers={offers} selectedOfferId={selectedOfferId} onSelect={setSelectedOfferId} />
+        </div>
+
+        {signal ? <SignalPanel signal={signal} /> : null}
+
+        {result ? (
+          <>
+            <Timeline items={result.timeline} />
+            <DecisionPanel decision={result.preliminary} title="规则初判" />
+            <ProofAndEscrow payment={result.payment} proof={result.proof} escrow={result.escrow} />
+            <DecisionPanel decision={result.finalDecision} title="规则复判" />
+            <section className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
+              <h2 className="text-lg font-black text-fg-base">审计凭证</h2>
+              <p className="mt-1 text-sm leading-6 text-fg-subtle">每次运行保留 policyVersion、规则结果、MarketProof 哈希和 Arc 交易哈希，便于复盘。</p>
+              <pre className="mt-4 overflow-auto rounded-2xl bg-neutral-950 p-4 text-xs leading-6 text-neutral-50">{JSON.stringify(result.audit, null, 2)}</pre>
+            </section>
+          </>
+        ) : (
+          <section className="rounded-[28px] border border-dashed border-border-contrast bg-bg-base p-8 text-center shadow-sm">
+            <h2 className="text-xl font-black text-fg-base">准备运行第一条代理决策</h2>
+            <p className="mt-2 text-sm leading-6 text-fg-subtle">选择 Seller A 展示 RESERVE 主路径；选择 Seller B 或 C 展示拒绝路径。</p>
+          </section>
+        )}
+
+        <footer className="rounded-[24px] border border-border-strong bg-bg-base p-5 text-sm leading-7 text-fg-subtle">
+          <strong className="text-fg-base">Demo disclosure:</strong> Renaiss API key/secret 仅放在 backend env；Arc 当前按 Testnet 展示，Circle/Arc 默认使用 deterministic mock adapter，接入真实 Agent Wallet 后可替换为 `circle services pay` 与 `circle wallet execute`。
+          {signal?.card.pageUrl ? <a className="ml-2 font-bold text-brand-100" href={signal.card.pageUrl} target="_blank" rel="noreferrer">Open Renaiss card page</a> : null}
+        </footer>
+      </div>
+    </main>
   )
 }

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+*/dist/
+coverage/
+.cache/
+.vite/
+*.tsbuildinfo
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Runtime state
+audit-log.jsonl
+*.log
+.DS_Store
+
+# Keys must never be committed
+*.pem
+*.key
+id_ed25519*

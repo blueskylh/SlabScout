@@ -1,8 +1,10 @@
 {
-  "name": "backend",
+  "name": "slabscout-backend",
   "private": true,
   "scripts": {
-    "dev": "node scripts/check-env.js node --watch server.js"
+    "dev": "node scripts/check-env.js node --watch server.js",
+    "start": "node scripts/check-env.js node server.js",
+    "check": "node scripts/manual-checklist.js"
   },
   "dependencies": {
     "@surf-ai/sdk": "1.0.5",
