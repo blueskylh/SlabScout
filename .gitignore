@@ -23,6 +23,7 @@ frontend/.env.*
 
 # Runtime state
 audit-log.jsonl
+.data/
 *.log
 .DS_Store
 

@@ -7,6 +7,8 @@ const {
   EXECUTION_MODES,
   PROOF_HASH_RE,
   EVM_ADDRESS_RE,
+  MAX_MARKET_PROOF_FEE_USDC,
+  MAX_ESCROW_DEPOSIT_USDC,
 } = require('./constants')
 
 const CERT_RE = /^[a-zA-Z0-9-]{4,64}$/
@@ -53,8 +55,12 @@ function validateAuthorization(input = {}) {
   if (positiveNumber(auth.minObservationCount) === null) errors.push('minObservationCount must be positive')
   if (positiveNumber(auth.maxLastSaleAgeDays) === null) errors.push('maxLastSaleAgeDays must be positive')
   if (positiveNumber(auth.maxMethodDeviationPct) === null) errors.push('maxMethodDeviationPct must be positive')
-  if (positiveNumber(auth.maxIntelFeeUsdc) === null) errors.push('maxIntelFeeUsdc must be positive')
-  if (positiveNumber(auth.maxDepositUsdc) === null) errors.push('maxDepositUsdc must be positive')
+  const maxIntelFee = positiveNumber(auth.maxIntelFeeUsdc)
+  if (maxIntelFee === null) errors.push('maxIntelFeeUsdc must be positive')
+  else if (maxIntelFee > MAX_MARKET_PROOF_FEE_USDC) errors.push(`maxIntelFeeUsdc must be <= ${MAX_MARKET_PROOF_FEE_USDC}`)
+  const maxDeposit = positiveNumber(auth.maxDepositUsdc)
+  if (maxDeposit === null) errors.push('maxDepositUsdc must be positive')
+  else if (maxDeposit > MAX_ESCROW_DEPOSIT_USDC) errors.push(`maxDepositUsdc must be <= ${MAX_ESCROW_DEPOSIT_USDC}`)
   if (positiveNumber(auth.dailyBudgetUsdc) === null) errors.push('dailyBudgetUsdc must be positive')
   const spent = finiteNumber(auth.spentTodayUsdc)
   if (spent === null || spent < 0) errors.push('spentTodayUsdc must be >= 0')
@@ -72,7 +78,9 @@ function validateOffer(input = {}, now = new Date()) {
   if (!offer.company || typeof offer.company !== 'string') errors.push('offer.company is required')
   if (!offer.gradeLabel || typeof offer.gradeLabel !== 'string') errors.push('offer.gradeLabel is required')
   if (positiveNumber(offer.askUsd) === null) errors.push('offer.askUsd must be positive')
-  if (positiveNumber(offer.depositUsdc) === null) errors.push('offer.depositUsdc must be positive')
+  const offerDeposit = positiveNumber(offer.depositUsdc)
+  if (offerDeposit === null) errors.push('offer.depositUsdc must be positive')
+  else if (offerDeposit > MAX_ESCROW_DEPOSIT_USDC) errors.push(`offer.depositUsdc must be <= ${MAX_ESCROW_DEPOSIT_USDC}`)
   if (!nonZeroAddress(offer.sellerAddress)) errors.push('offer.sellerAddress must be a valid non-zero EVM address')
   if (!offer.expiresAt) errors.push('offer.expiresAt is required')
   else {
@@ -107,6 +115,7 @@ function validateRuntimeConfig(env = process.env, { live = false } = {}) {
   if (env.RESERVATION_ESCROW_ADDRESS && !nonZeroAddress(env.RESERVATION_ESCROW_ADDRESS)) errors.push('RESERVATION_ESCROW_ADDRESS must be a valid non-zero EVM address')
   if (env.AGENT_WALLET_ADDRESS && !nonZeroAddress(env.AGENT_WALLET_ADDRESS)) errors.push('AGENT_WALLET_ADDRESS must be a valid non-zero EVM address')
   if (env.SELLER_WALLET_ADDRESS && !nonZeroAddress(env.SELLER_WALLET_ADDRESS)) errors.push('SELLER_WALLET_ADDRESS must be a valid non-zero EVM address')
+  if (env.PROOF_HASH && !validProofHash(env.PROOF_HASH)) errors.push('PROOF_HASH must be a full 32-byte 0x-prefixed hex string')
   if (live && (!env.RESERVATION_ESCROW_ADDRESS || !env.AGENT_WALLET_ADDRESS)) errors.push('live mode requires RESERVATION_ESCROW_ADDRESS and AGENT_WALLET_ADDRESS')
   return { ok: errors.length === 0, errors }
 }
@@ -128,6 +137,7 @@ function identityMatches({ authorization, offer, certLookup, cardDetail }) {
   const gradeLabel = authorization.gradeLabel || offer.gradeLabel
   return Boolean(
     targetItemId && targetHref &&
+    offer.targetCard === authorization.targetCard &&
     offer.targetItemId === targetItemId &&
     offer.targetHref === targetHref &&
     certItemId === targetItemId &&

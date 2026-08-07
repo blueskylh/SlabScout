@@ -36,11 +36,11 @@ function plannedIntelFee({ authorization, quality, proof, ignoreRefreshing }) {
   return needsProof ? configuredFee : 0
 }
 
-function proofIsVerified(proof) {
-  return Boolean(proof && (proof.verified === true || proof.verification?.ok === true))
+function proofIsVerified(_proof, proofVerification) {
+  return Boolean(proofVerification && proofVerification.ok === true && proofVerification.proofKind === 'MarketProof')
 }
 
-function evaluateSignal({ signal, offer, authorization, now = new Date(), ignoreRefreshing = false, proof = null }) {
+function evaluateSignal({ signal, offer, authorization, now = new Date(), ignoreRefreshing = false, proof = null, proofVerification = null }) {
   const valuation = signal.valuation || {}
   const quality = signal.quality || {}
   const identity = signal.identity || {}
@@ -97,7 +97,7 @@ function evaluateSignal({ signal, offer, authorization, now = new Date(), ignore
 
   if (quality.refreshing && authorization.requireMarketProof && !ignoreRefreshing) checks.push(warn('refreshing', 'Renaiss 正在刷新', '授权要求 MarketProof 时需先购买证明，不直接付款'))
   if (authorization.requireMarketProof && !proof) checks.push(warn('proof-required', '授权要求市场证明', '先用 nanopayment 获取带哈希的 MarketProof'))
-  if (proof) checks.push(check('proof-verified', 'MarketProof 已验签且绑定本次报价', proofIsVerified(proof), proof.proofHash || 'missing'))
+  if (proof) checks.push(check('proof-verified', 'MarketProof 已验签且绑定本次报价', proofIsVerified(proof, proofVerification), proof.proofHash || 'missing'))
 
   const hardFails = checks.filter((item) => item.severity === 'hard' && item.status === 'fail')
   const warnings = checks.filter((item) => item.status === 'warn')
@@ -133,8 +133,8 @@ function buildExplanation(action, hardFails, warnings) {
   return `拒绝：${hardFails.map((item) => item.label).join('、')}。`
 }
 
-function finalizeWithProof({ signal, offer, authorization, proof, now = new Date() }) {
-  if (!proofIsVerified(proof)) {
+function finalizeWithProof({ signal, offer, authorization, proof, proofVerification, now = new Date() }) {
+  if (!proofIsVerified(proof, proofVerification)) {
     return {
       action: 'REJECT',
       policyVersion: 'slabscout-policy-v1.1.0',
@@ -146,7 +146,7 @@ function finalizeWithProof({ signal, offer, authorization, proof, now = new Date
       explanation: '拒绝：MarketProof 未通过验签或未绑定本次报价。',
     }
   }
-  return evaluateSignal({ signal, offer, authorization, now, ignoreRefreshing: true, proof })
+  return evaluateSignal({ signal, offer, authorization, now, ignoreRefreshing: true, proof, proofVerification })
 }
 
 module.exports = { evaluateSignal, finalizeWithProof, daysSince }

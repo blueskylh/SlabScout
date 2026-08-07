@@ -4,11 +4,15 @@ const {
   ZERO_ADDRESS,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
   DEFAULT_ESCROW_DEPOSIT_USDC,
+  MAX_MARKET_PROOF_FEE_USDC,
+  MAX_ESCROW_DEPOSIT_USDC,
+  ARC_TESTNET_NAME,
   DEMO_TARGET,
 } = require('./constants')
 
 const DEFAULT_AUTHORIZATION = Object.freeze({
   targetCard: DEMO_TARGET.targetCard,
+  displayLabel: DEMO_TARGET.targetCard,
   targetItemId: DEMO_TARGET.targetItemId,
   targetRenaissItemId: DEMO_TARGET.targetRenaissItemId,
   targetHref: DEMO_TARGET.targetHref,
@@ -22,8 +26,8 @@ const DEFAULT_AUTHORIZATION = Object.freeze({
   minObservationCount: 5,
   maxLastSaleAgeDays: 14,
   maxMethodDeviationPct: 15,
-  maxIntelFeeUsdc: 0.01,
-  maxDepositUsdc: 0.5,
+  maxIntelFeeUsdc: MAX_MARKET_PROOF_FEE_USDC,
+  maxDepositUsdc: MAX_ESCROW_DEPOSIT_USDC,
   dailyBudgetUsdc: 1,
   spentTodayUsdc: 0,
   requireMarketProof: true,
@@ -42,6 +46,7 @@ function makeDemoOffer(id, overrides) {
     title: overrides.title,
     card: DEMO_CARD,
     targetCard: DEMO_TARGET.targetCard,
+    displayLabel: DEMO_TARGET.targetCard,
     targetItemId: DEMO_TARGET.targetItemId,
     targetRenaissItemId: DEMO_TARGET.targetRenaissItemId,
     targetHref: DEMO_TARGET.targetHref,
@@ -142,5 +147,8 @@ module.exports = {
   ZERO_ADDRESS,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
   DEFAULT_ESCROW_DEPOSIT_USDC,
+  MAX_MARKET_PROOF_FEE_USDC,
+  MAX_ESCROW_DEPOSIT_USDC,
+  ARC_TESTNET_NAME,
   DEMO_TARGET,
 }
