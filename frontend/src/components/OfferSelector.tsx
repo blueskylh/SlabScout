@@ -31,6 +31,7 @@ export function OfferSelector({ offers, selectedOfferId, onSelect }: Props) {
               <p className="mt-2 text-sm leading-6 text-fg-subtle">{offer.narrative}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-fg-subtle">
                 <span className="rounded-full bg-bg-subtle px-2 py-1">deposit {offer.depositUsdc} USDC</span>
+                <span className="rounded-full bg-bg-subtle px-2 py-1">cert {offer.certNumber}</span>
                 <span className="rounded-full bg-bg-subtle px-2 py-1">image {offer.imageConfidence}</span>
                 <span className="rounded-full bg-bg-subtle px-2 py-1">cert {offer.certFound ? 'found' : 'missing'}</span>
               </div>

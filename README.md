@@ -30,6 +30,21 @@ packages/shared          Shared demo config and utilities
 contracts/               ReservationEscrow.sol and lightweight fixture
 ```
 
+## MVP implementation status
+
+P0-A is implemented in this repository:
+
+- Arc Testnet chain ID is `5042002`.
+- Arc Testnet USDC is `0x3600000000000000000000000000000000000000`.
+- Renaiss trades use `scope=grade`, normalize `observedAt`, and expose transaction rows separately from listings.
+- Offers now require target card, certificate number, expiry, amount, seller address, and enum validation.
+- Replay includes a cert lookup fixture and policy requires cert lookup to match the target card.
+- Live mode refuses the built-in MarketProof signing secret.
+- Node tests with real assertions cover constants, validation, cert lookup, policy rejection, live secret guard, and replay branches.
+- Mock adapters no longer return fake live tx hashes; replay receipts are labelled `replay-*`, not live payment / explorer evidence.
+
+P0-B/P0-C/P0-D still require Circle Agent Wallet login, test USDC funding, x402/Nanopayment wiring, Arc deployment, and persistent budget/idempotency storage before the project can be called a live-submittable MVP.
+
 ## Environment
 
 Never commit real credentials. Copy the examples and fill them locally or in Surf
@@ -58,7 +73,7 @@ Optional but recommended for live mode:
 The supplied Renaiss key must stay in `backend/.env` or Surf Studio server envs.
 Do not create `VITE_` variables for it.
 
-## Local development
+## Local development and checks
 
 In two terminals:
 
@@ -74,8 +89,19 @@ bun install
 bun run dev
 ```
 
-If Bun is unavailable, npm can run the same package scripts after installing the
-locked dependencies.
+If Bun is unavailable, npm can run the same package scripts after installing the locked dependencies.
+
+Root-level checks added for MVP hardening:
+
+```bash
+npm test
+npm run lint
+npm --prefix frontend install
+npm run type-check
+BACKEND_PORT=3001 BASE_PATH=/ npm run build
+```
+
+The frontend build script requires `BACKEND_PORT` and `BASE_PATH` to be defined, matching the Surf Studio template guard.
 
 ## Demo paths
 

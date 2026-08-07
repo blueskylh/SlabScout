@@ -1,0 +1,10 @@
+{
+  "name": "slabscout-mvp",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "lint": "node scripts/lint-source.js",
+    "type-check": "npm --prefix frontend run type-check",
+    "build": "npm --prefix frontend run build"
+  }
+}

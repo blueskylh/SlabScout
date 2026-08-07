@@ -1,5 +1,6 @@
 const { DEMO_CARD, usdFromCents, round } = require('../shared')
-const { replayCardDetail, replayFmvSeries, replayTrades, replayIndices } = require('../shared/demo-fixtures')
+const { cardIdentityMatchesTarget } = require('../shared/validation')
+const { replayCardDetail, replayFmvSeries, replayTrades, replayCertLookup, replayIndices } = require('../shared/demo-fixtures')
 
 const DEFAULT_BASE_URL = 'https://api.renaissos.com'
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -84,16 +85,40 @@ function normalizeTrades(trades) {
     kind: trade.kind || 'unknown',
     source: trade.source || trade.sourceName || 'unknown',
     priceUsd: usdFromCents(trade.priceUsdCents),
-    soldAt: trade.soldAt || trade.occurredAt || trade.createdAt || null,
+    observedAt: trade.observedAt || trade.soldAt || trade.occurredAt || trade.createdAt || null,
   }))
 }
 
-function normalizeSignal({ detail, fmv, trades, indices, mode, offer }) {
+function normalizeCertLookup(certLookup, offer) {
+  const body = certLookup || {}
+  const card = body.card || body.summary || body.item || {}
+  const cert = body.cert || body.certNumber || body.certificateNumber || offer?.certNumber || null
+  const name = body.name || card.name || body.cardName || null
+  const gradeLabel = body.gradeLabel || card.gradeLabel || body.grade || card.grade || null
+  const found = Boolean(body.found === true || (body.found !== false && (name || gradeLabel)))
+  const targetCard = offer?.targetCard || ''
+  const matchesOffer = found && cardIdentityMatchesTarget({ targetCard, cardName: name, gradeLabel })
+  return {
+    cert,
+    found,
+    matchesOffer,
+    name,
+    setName: body.setName || card.setName || null,
+    gradeLabel,
+    company: body.company || card.company || null,
+    observedAt: body.observedAt || body.updatedAt || body.checkedAt || new Date().toISOString(),
+    rawFound: body.found ?? null,
+  }
+}
+
+function normalizeSignal({ detail, fmv, trades, certLookup, indices, mode, offer }) {
   const medianUsd = methodPrice(detail.methods, 'median', detail.priceUsdCents)
   const meanUsd = methodPrice(detail.methods, 'mean', detail.priceUsdCents)
   const vwapUsd = methodPrice(detail.methods, 'vwap', detail.priceUsdCents)
-  const completedTrades = normalizeTrades(trades).filter((trade) => trade.kind === 'transaction')
-  const identityConfidence = offer?.imageConfidence || (offer?.certFound ? 'high' : 'medium')
+  const allTrades = normalizeTrades(trades)
+  const completedTrades = allTrades.filter((trade) => trade.kind === 'transaction')
+  const cert = normalizeCertLookup(certLookup, offer)
+  const identityConfidence = offer?.imageConfidence || (cert.matchesOffer ? 'high' : 'medium')
 
   return {
     dataMode: mode,
@@ -115,7 +140,10 @@ function normalizeSignal({ detail, fmv, trades, indices, mode, offer }) {
     },
     identity: {
       imageConfidence: identityConfidence,
-      certFound: Boolean(offer?.certFound),
+      certNumber: offer?.certNumber || null,
+      certFound: cert.found,
+      certMatchesOffer: cert.matchesOffer,
+      certLookup: cert,
       forcedLowConfidence: Boolean(offer?.forceLowConfidence),
     },
     valuation: {
@@ -151,8 +179,8 @@ function normalizeSignal({ detail, fmv, trades, indices, mode, offer }) {
     },
     trades: {
       completedCount: completedTrades.length,
-      listingCount: normalizeTrades(trades).filter((trade) => trade.kind === 'listing').length,
-      recent: normalizeTrades(trades).slice(0, 8),
+      listingCount: allTrades.filter((trade) => trade.kind === 'listing').length,
+      recent: completedTrades.slice(0, 8),
     },
     trend: normalizeSeries(fmv),
     marketBackdrop: (Array.isArray(indices.indices) ? indices.indices : []).slice(0, 3).map((index) => ({
@@ -180,6 +208,7 @@ async function getReplaySignal({ offer } = {}) {
     detail: replayCardDetail,
     fmv: replayFmvSeries,
     trades: replayTrades,
+    certLookup: replayCertLookup,
     indices: replayIndices,
     mode: 'replay',
     offer,
@@ -188,10 +217,12 @@ async function getReplaySignal({ offer } = {}) {
 
 async function getLiveSignal({ card = DEMO_CARD, offer } = {}) {
   const slug = `/v1/cards/${card.game}/${card.set}/${card.card}`
-  const [detailResult, fmvResult, tradesResult, indicesResult] = await Promise.all([
+  const certNumber = offer?.certNumber
+  const [detailResult, fmvResult, tradesResult, certResult, indicesResult] = await Promise.all([
     fetchJson(slug),
     fetchJson(`${slug}/fmv-series?window=30`),
-    fetchJson(`${slug}/trades?window=7&scope=completed&limit=16`),
+    fetchJson(`${slug}/trades?window=7&scope=grade&limit=16`),
+    certNumber ? fetchJson(`/v1/graded/${encodeURIComponent(certNumber)}`) : Promise.resolve({ body: { found: false }, meta: {} }),
     fetchJson('/v1/indices'),
   ])
 
@@ -199,6 +230,7 @@ async function getLiveSignal({ card = DEMO_CARD, offer } = {}) {
     detail: detailResult.body,
     fmv: fmvResult.body,
     trades: tradesResult.body,
+    certLookup: certResult.body,
     indices: indicesResult.body,
     mode: detailResult.meta.cached ? 'live-cache' : 'live',
     offer,

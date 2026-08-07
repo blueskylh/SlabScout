@@ -24,6 +24,8 @@ export interface Offer {
   depositUsdc: number
   sellerAddress: string
   expiresAt: string
+  targetCard: string
+  certNumber: string
   imageConfidence: string
   certFound: boolean
   forceLowConfidence?: boolean
@@ -49,7 +51,10 @@ export interface Signal {
   }
   identity: {
     imageConfidence: string
+    certNumber: string | null
     certFound: boolean
+    certMatchesOffer: boolean
+    certLookup: { cert: string | null; found: boolean; matchesOffer: boolean; name: string | null; gradeLabel: string | null; observedAt: string | null }
     forcedLowConfidence?: boolean
   }
   valuation: {
@@ -74,7 +79,7 @@ export interface Signal {
   trades: {
     completedCount: number
     listingCount: number
-    recent: Array<{ kind: string; source: string; priceUsd: number; soldAt: string | null }>
+    recent: Array<{ kind: string; source: string; priceUsd: number | null; observedAt: string | null }>
   }
   trend: Array<{ method: string; label: string; points: Array<{ t: string; usd: number }> }>
   marketBackdrop: Array<{ game: string; label: string; value: number; deltas: Record<string, number>; updatedAt: string }>
@@ -100,7 +105,8 @@ export interface Decision {
 
 export interface PaymentReceipt {
   status: string
-  receiptId: string
+  confirmed?: boolean
+  receiptId: string | null
   amountUsdc: number
   asset: string
   network: string
@@ -121,12 +127,16 @@ export interface MarketProof {
   sourceCount: number
   observationCount: number
   listingRowsExcluded: number
+  expiresAt?: string
+  cardIdentity?: Record<string, unknown>
+  sourceTimestamps?: Array<{ source: string; observedAt: string }>
+  paymentReceipt?: Record<string, unknown> | null
   outliers: string[]
 }
 
 export interface EscrowReceipt {
   status: string
-  txHash: string
+  txHash: string | null
   offerHash: string
   buyer: string
   seller: string
@@ -134,6 +144,9 @@ export interface EscrowReceipt {
   chainId: number
   amountUsdc: number
   proofHash: string
+  blockNumber?: number | null
+  arcscanUrl?: string | null
+  chainConfirmed?: boolean
   event?: string
   note?: string
 }
@@ -143,7 +156,7 @@ export interface TimelineItem {
   status: 'done' | 'warn' | 'blocked'
   note: string
   at: string
-  txHash?: string
+  txHash?: string | null
   receiptId?: string
 }
 

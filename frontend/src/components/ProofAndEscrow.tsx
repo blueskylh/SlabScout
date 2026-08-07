@@ -17,7 +17,7 @@ export function ProofAndEscrow({ payment, proof, escrow }: { payment: PaymentRec
       <article className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-black text-fg-base">Nanopayment</h2>
-          <StatusPill tone={payment?.status === 'paid' ? 'pass' : 'warn'}>{payment ? payment.status : 'not paid'}</StatusPill>
+          <StatusPill tone={payment?.confirmed ? 'pass' : 'warn'}>{payment ? payment.status : 'not paid'}</StatusPill>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <Row label="Amount" value={payment ? `${payment.amountUsdc} ${payment.asset}` : '—'} />
@@ -41,12 +41,12 @@ export function ProofAndEscrow({ payment, proof, escrow }: { payment: PaymentRec
       <article className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-black text-fg-base">Arc Escrow</h2>
-          <StatusPill tone={escrow?.status === 'reserved' ? 'pass' : 'warn'}>{escrow ? escrow.status : 'not reserved'}</StatusPill>
+          <StatusPill tone={escrow?.chainConfirmed ? 'pass' : 'warn'}>{escrow ? escrow.status : 'not reserved'}</StatusPill>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <Row label="Deposit" value={escrow ? `${escrow.amountUsdc} USDC` : '—'} />
           <Row label="Tx hash" value={shortHash(escrow?.txHash)} mono />
-          <Row label="Chain ID" value={escrow ? String(escrow.chainId) : '50420'} />
+          <Row label="Chain ID" value={escrow ? String(escrow.chainId) : '5042002'} />
         </dl>
       </article>
     </section>

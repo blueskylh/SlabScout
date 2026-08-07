@@ -43,6 +43,7 @@ export function SignalPanel({ signal }: { signal: Signal }) {
             </div>
             <div className="flex gap-2">
               <StatusPill tone={signal.quality.confidence === 'prime' ? 'pass' : 'warn'}>{signal.quality.confidence}</StatusPill>
+              <StatusPill tone={signal.identity.certMatchesOffer ? 'pass' : 'fail'}>{signal.identity.certMatchesOffer ? 'cert match' : 'cert fail'}</StatusPill>
               <StatusPill tone={signal.quality.refreshing ? 'warn' : 'pass'}>{signal.quality.refreshing ? 'refreshing' : 'fresh'}</StatusPill>
             </div>
           </div>

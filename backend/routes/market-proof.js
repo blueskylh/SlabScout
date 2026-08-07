@@ -19,8 +19,8 @@ router.post('/prove', async (req, res, next) => {
     const offer = req.body.offer || DEMO_OFFERS[0]
     const signal = req.body.signal
     if (!signal) throw new Error('signal is required')
-    const payment = await payForMarketProof({ runId: req.body.runId || 'adhoc', offer, authorization })
-    if (payment.status !== 'paid') {
+    const payment = await payForMarketProof({ runId: req.body.runId || 'adhoc', offer, authorization, dataMode: 'live' })
+    if (!payment.confirmed) {
       res.status(402).json({ payment, error: 'MarketProof payment not completed' })
       return
     }

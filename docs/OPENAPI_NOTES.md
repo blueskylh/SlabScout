@@ -8,11 +8,10 @@ API key or secret. The main surfaces used by the demo are:
 - `GET /v1/search?q=...` to discover card slugs and candidate cards.
 - `GET /v1/cards/{game}/{set}/{card}` to load card identity, FMV methods,
   confidence, source counts, observation counts, `lastSaleAt`, and `refreshing`.
-- `GET /v1/cards/{game}/{set}/{card}/trades` to inspect observations. The app
-  filters out `kind=listing` when producing MarketProof; listings do not count
-  as completed sales in the deterministic policy.
+- `GET /v1/cards/{game}/{set}/{card}/trades?scope=grade` to inspect graded-card observations. The app normalizes `observedAt`, keeps only `kind=transaction` rows in the MarketProof sample, and tracks listing rows only as excluded context.
 - `GET /v1/cards/{game}/{set}/{card}/fmv-series?window=30` to show trend
   consistency across median, mean, and VWAP.
+- `GET /v1/graded/{cert}` to verify certificate identity. The policy records `found`, card name, grade label, and whether the cert result matches the offer target.
 - `GET /v1/indices` for market backdrop only. Index movement never overrides a
   single-card hard rule.
 

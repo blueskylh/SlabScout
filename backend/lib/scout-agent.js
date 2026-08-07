@@ -1,8 +1,9 @@
 const crypto = require('node:crypto')
 const { DEFAULT_AUTHORIZATION, DEMO_OFFERS } = require('../../packages/shared')
+const { validateAuthorization, validateOffer, validateMode, assertValid } = require('../../packages/shared/validation')
 const { getCardSignal } = require('../../packages/renaiss-client')
 const { evaluateSignal, finalizeWithProof } = require('../../packages/policy-engine')
-const { buildMarketProof } = require('../../packages/market-proof')
+const { buildMarketProof, assertLiveSigningSecret } = require('../../packages/market-proof')
 const { payForMarketProof, reserveEscrow } = require('./circle-adapters')
 const { appendAudit } = require('./audit-log')
 
@@ -49,8 +50,13 @@ async function runScout(body = {}) {
   const id = runId()
   const timeline = []
   const mode = body.mode || process.env.SLABSCOUT_DEFAULT_MODE || 'replay'
+  assertValid('mode', validateMode(mode))
+  assertLiveSigningSecret(mode)
   const offer = selectOffer(body)
   const authorization = mergeAuthorization(body.authorization)
+  if (!offer.targetCard) offer.targetCard = authorization.targetCard
+  assertValid('authorization', validateAuthorization(authorization))
+  assertValid('offer', validateOffer(offer))
 
   pushTimeline(timeline, '授权读取', 'done', '用户预算和硬门槛已固定，后续花钱只能由规则引擎触发。')
 
@@ -71,15 +77,15 @@ async function runScout(body = {}) {
   let escrow = null
 
   if (preliminary.action === 'INVESTIGATE') {
-    payment = await payForMarketProof({ runId: id, offer, authorization })
+    payment = await payForMarketProof({ runId: id, offer, authorization, dataMode: signal.dataMode })
     pushTimeline(
       timeline,
       'Nanopayment',
-      payment.status === 'paid' ? 'done' : 'warn',
-      payment.status === 'paid' ? `代理支付 ${payment.amountUsdc} USDC 获取 MarketProof。` : payment.note,
+      payment.confirmed ? 'done' : 'warn',
+      payment.confirmed ? `MarketProof 付款已确认：${payment.amountUsdc} USDC。` : payment.note,
       { receiptId: payment.receiptId },
     )
-    if (payment.status === 'paid') {
+    if (payment.confirmed) {
       proof = buildMarketProof({ signal, offer, authorization, payment })
       pushTimeline(timeline, 'MarketProof', 'done', `证明哈希 ${proof.proofHash.slice(0, 18)}… 已生成，listing 行已排除。`)
       finalDecision = finalizeWithProof({ signal, offer, authorization, proof })
@@ -92,8 +98,8 @@ async function runScout(body = {}) {
 
   if (finalDecision.action === 'RESERVE') {
     if (!proof && authorization.requireMarketProof) {
-      payment = await payForMarketProof({ runId: id, offer, authorization })
-      if (payment.status !== 'paid') {
+      payment = await payForMarketProof({ runId: id, offer, authorization, dataMode: signal.dataMode })
+      if (!payment.confirmed) {
         finalDecision = { ...finalDecision, action: 'INVESTIGATE', explanation: '支付适配器未完成真实付款；保持调查状态，禁止锁订金。' }
         pushTimeline(timeline, '支付保护', 'blocked', finalDecision.explanation, { receiptId: payment.receiptId })
       } else {
@@ -106,12 +112,12 @@ async function runScout(body = {}) {
       pushTimeline(timeline, 'PolicyProof', 'done', `未要求付费证明；生成本地决策哈希 ${proof.proofHash.slice(0, 18)}… 供 escrow 审计。`)
     }
     if (finalDecision.action === 'RESERVE') {
-      escrow = await reserveEscrow({ runId: id, offer, proof, authorization })
+      escrow = await reserveEscrow({ runId: id, offer, proof, authorization, dataMode: signal.dataMode })
       pushTimeline(
         timeline,
         'Arc 订金合约',
-        escrow.status === 'reserved' ? 'done' : 'warn',
-        escrow.status === 'reserved' ? `锁定 ${offer.depositUsdc} USDC 订金。` : escrow.note,
+        escrow.chainConfirmed ? 'done' : 'warn',
+        escrow.chainConfirmed ? `Arc escrow 已确认 ${offer.depositUsdc} USDC 订金。` : escrow.note,
         { txHash: escrow.txHash },
       )
     }

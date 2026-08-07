@@ -30,10 +30,12 @@ const FALLBACK_OFFERS: Offer[] = [
   {
     id: 'offer-charizard-350',
     title: 'Seller A · clean discount',
+    targetCard: 'Charizard · Japanese CLL Classic · PSA 10',
+    certNumber: 'DEMO-CERT-CHARIZARD-PSA10',
     askUsd: 350,
     depositUsdc: 0.1,
     sellerAddress: '0x5000000000000000000000000000000000000001',
-    expiresAt: '2026-08-09T10:00:00.000Z',
+    expiresAt: '2030-08-09T10:00:00.000Z',
     imageConfidence: 'high',
     certFound: true,
     narrative: '报价约低于 7 日中位价 11%，用于展示自动付费深查 + Arc 订金锁定。',

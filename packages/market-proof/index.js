@@ -1,6 +1,21 @@
 const crypto = require('node:crypto')
 const { round, stableJson } = require('../shared')
 
+
+const DEFAULT_SIGNING_SECRET = 'slabscout-demo-signing-secret'
+
+function getSigningSecret({ live = false } = {}) {
+  const secret = process.env.MARKET_PROOF_SIGNING_SECRET || DEFAULT_SIGNING_SECRET
+  if (live && secret === DEFAULT_SIGNING_SECRET) {
+    throw new Error('MARKET_PROOF_SIGNING_SECRET must be set to a non-default value in live mode')
+  }
+  return secret
+}
+
+function assertLiveSigningSecret(mode) {
+  if (mode === 'live') getSigningSecret({ live: true })
+}
+
 function buildMarketProof({ signal, offer, authorization, payment }) {
   const medianUsd = signal.valuation.medianUsd
   const meanUsd = signal.valuation.meanUsd
@@ -12,7 +27,16 @@ function buildMarketProof({ signal, offer, authorization, payment }) {
     generatedAt: new Date().toISOString(),
     cardId: signal.card.id,
     cardName: `${signal.card.name} ${signal.card.gradeLabel}`,
+    cardIdentity: {
+      name: signal.card.name,
+      setName: signal.card.setName,
+      gradeLabel: signal.card.gradeLabel,
+      certNumber: signal.identity?.certNumber || offer.certNumber || null,
+      certFound: signal.identity?.certFound || false,
+      certMatchesOffer: signal.identity?.certMatchesOffer || false,
+    },
     offerId: offer.id,
+    expiresAt: offer.expiresAt,
     askUsd: offer.askUsd,
     source: 'Renaiss OS Index',
     dataAsOf: signal.dataAsOf,
@@ -24,13 +48,14 @@ function buildMarketProof({ signal, offer, authorization, payment }) {
     vwapUsd: round(vwapUsd, 2),
     suggestedMaxUsd,
     completedTradeSample: completedTrades.slice(0, 5),
+    sourceTimestamps: completedTrades.map((trade) => ({ source: trade.source, observedAt: trade.observedAt })).filter((item) => item.observedAt).slice(0, 10),
     listingRowsExcluded: signal.trades?.listingCount || 0,
     outliers: detectOutliers({ signal, offer, authorization }),
-    paymentReceiptId: payment?.receiptId || null,
+    paymentReceipt: payment ? { receiptId: payment.receiptId, status: payment.status, amountUsdc: payment.amountUsdc, paidAt: payment.paidAt || null } : null,
   }
   const canonical = stableJson(payload)
   const proofHash = `0x${crypto.createHash('sha256').update(canonical).digest('hex')}`
-  const signingSecret = process.env.MARKET_PROOF_SIGNING_SECRET || 'slabscout-demo-signing-secret'
+  const signingSecret = getSigningSecret({ live: String(signal.dataMode || '').startsWith('live') })
   const signature = `hmac-sha256:${crypto.createHmac('sha256', signingSecret).update(proofHash).digest('hex')}`
 
   return {
@@ -56,4 +81,7 @@ function detectOutliers({ signal, offer, authorization }) {
 
 module.exports = {
   buildMarketProof,
+  getSigningSecret,
+  assertLiveSigningSecret,
+  DEFAULT_SIGNING_SECRET,
 }

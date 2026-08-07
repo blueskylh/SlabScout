@@ -88,14 +88,28 @@ const replayFmvSeries = Object.freeze({
 
 const replayTrades = Object.freeze({
   trades: [
-    { kind: 'transaction', source: 'site_s', priceUsdCents: 39000, soldAt: '2026-08-06T19:00:00.000Z' },
-    { kind: 'transaction', source: 'site_s', priceUsdCents: 40100, soldAt: '2026-08-06T13:10:00.000Z' },
-    { kind: 'transaction', source: 'site_a', priceUsdCents: 43957, soldAt: '2026-08-05T20:30:00.000Z' },
-    { kind: 'listing', source: 'site_a', priceUsdCents: 99, soldAt: null },
-    { kind: 'listing', source: 'site_s', priceUsdCents: 40558, soldAt: null },
+    { kind: 'transaction', source: 'site_s', priceUsdCents: 39000, observedAt: '2026-08-06T19:00:00.000Z' },
+    { kind: 'transaction', source: 'site_s', priceUsdCents: 40100, observedAt: '2026-08-06T13:10:00.000Z' },
+    { kind: 'transaction', source: 'site_a', priceUsdCents: 43957, observedAt: '2026-08-05T20:30:00.000Z' },
+    { kind: 'listing', source: 'site_a', priceUsdCents: 99, observedAt: null },
+    { kind: 'listing', source: 'site_s', priceUsdCents: 40558, observedAt: null },
   ],
   total: 37,
   sourceCounts: { site_s: 30, site_a: 7 },
+})
+
+
+
+const replayCertLookup = Object.freeze({
+  cert: 'DEMO-CERT-CHARIZARD-PSA10',
+  found: true,
+  company: 'PSA',
+  gradeLabel: 'PSA 10',
+  name: 'Charizard',
+  setName: 'Pokemon Japanese Cll-Trading Card Game Classic Charizard & HO-Oh EX Deck',
+  cardNumber: '003',
+  language: 'Japanese',
+  observedAt: '2026-08-07T08:24:23.429Z',
 })
 
 const replayIndices = Object.freeze({
@@ -127,5 +141,6 @@ module.exports = {
   replayCardDetail,
   replayFmvSeries,
   replayTrades,
+  replayCertLookup,
   replayIndices,
 }

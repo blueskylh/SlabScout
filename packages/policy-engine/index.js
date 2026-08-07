@@ -63,8 +63,14 @@ function evaluateSignal({ signal, offer, authorization, now = new Date(), ignore
     check(
       'identity',
       '身份可信',
-      identity.certFound === true || identity.imageConfidence === 'high',
-      `image=${identity.imageConfidence || 'unknown'}, certFound=${identity.certFound}`,
+      identity.certMatchesOffer === true || identity.imageConfidence === 'high',
+      `image=${identity.imageConfidence || 'unknown'}, certFound=${identity.certFound}, certMatch=${identity.certMatchesOffer}`,
+    ),
+    check(
+      'cert-lookup',
+      '证书查询与目标卡匹配',
+      identity.certFound === true && identity.certMatchesOffer === true,
+      `cert=${identity.certNumber || 'missing'}, found=${identity.certFound}, match=${identity.certMatchesOffer}`,
     ),
     check(
       'confidence',

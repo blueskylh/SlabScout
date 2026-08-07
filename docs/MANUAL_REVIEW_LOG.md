@@ -30,4 +30,16 @@ A second requested source-reading loop was performed without using runtime check
 9. **Frontend UX pass** — re-read App and every SlabScout component; fixed stale result display when mode/offer/auth changes, safer API error parsing, cleaner null percentage rendering, safer date label, and receipt display in timeline.
 10. **Contract/docs/env pass** — re-read escrow contract, env examples, README, API notes, and this log; confirmed Arc Testnet/mock boundaries are documented and kept real credentials out of tracked files.
 
-Known boundary: Circle/Arc live execution is intentionally adapter-gated. The default demo path uses deterministic mock receipts until server-side Circle Agent Wallet credentials and deployed escrow addresses are configured.
+## P0-A implementation pass
+
+After the MVP specification review, P0-A was implemented and source-reviewed:
+
+- Arc constants were corrected to chain ID `5042002` and USDC `0x3600000000000000000000000000000000000000`.
+- Renaiss trade lookup was changed to `scope=grade`; trade normalization now prefers `observedAt`, and replay/MarketProof samples expose transaction rows separately from listings.
+- Certificate lookup normalization was added, including `found`, card name, grade label, observed timestamp, and target-card match checks.
+- Offer and authorization validation now covers target card, cert number, expiry, confidence enums, numeric bounds, and EVM seller address format.
+- Live mode now rejects the built-in MarketProof signing secret.
+- Mock adapters no longer fabricate live transaction hashes. Replay receipts are labelled as replay fixtures and do not include live explorer URLs.
+- Node tests with assertions were added under `tests/p0a.test.js`.
+
+Known boundary: Circle/Arc live execution is intentionally adapter-gated. The default replay path uses labelled replay confirmations until server-side Circle Agent Wallet credentials, real payment receipt verification, deployed escrow address, and Arc Testnet transaction confirmation are configured.
