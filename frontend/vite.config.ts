@@ -52,6 +52,22 @@ export default defineConfig(() => {
         '@tanstack/query-core',
       ],
     },
+    build: {
+      // ECharts is intentionally lazy-loaded as a separate visualization chunk.
+      // Keep the warning threshold realistic for that vendor payload while the
+      // interactive app shell remains small.
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks(id: string) {
+            if (id.includes('node_modules/echarts') || id.includes('node_modules/zrender') || id.includes('node_modules/echarts-for-react')) return 'charts'
+            if (id.includes('node_modules/lucide-react')) return 'icons'
+            if (id.includes('node_modules/@tanstack')) return 'query'
+            if (id.includes('node_modules/react')) return 'react-vendor'
+          },
+        },
+      },
+    },
     base,
   }
 })

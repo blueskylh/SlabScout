@@ -2,7 +2,8 @@
  * Validates required env vars before running a command.
  * Loads .env if it exists (optional convenience), then checks vars.
  *
- * Dev/start: BACKEND_PORT, SURF_API_KEY
+ * Dev/start: BACKEND_PORT
+ * Optional: RENAISS_API_KEY and RENAISS_API_SECRET lift the upstream API rate limit.
  */
 const fs = require('node:fs')
 const path = require('node:path')
@@ -24,13 +25,17 @@ if (fs.existsSync(envPath)) {
 
 const args = process.argv.slice(2)
 
-const required = ['BACKEND_PORT', 'SURF_API_KEY']
+const required = ['BACKEND_PORT']
 const missing = required.filter(k => !process.env[k])
 
 if (missing.length > 0) {
   console.error(`\n❌ Missing required env vars: ${missing.join(', ')}`)
   console.error(`   Set them in your environment or copy .env.example to .env\n`)
   process.exit(1)
+}
+
+if (!process.env.RENAISS_API_KEY || !process.env.RENAISS_API_SECRET) {
+  console.warn('\n⚠️  RENAISS_API_KEY / RENAISS_API_SECRET are not set; backend will use the anonymous upstream tier.\n')
 }
 
 try {
