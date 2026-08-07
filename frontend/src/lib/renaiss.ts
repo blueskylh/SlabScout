@@ -286,9 +286,15 @@ export interface GradedLookup {
   found?: boolean
   grade?: string | null
   gradeLabel?: string | null
-  card?: CardDetail | null
-  certImages?: string[]
-  collectible?: CardSummary | null
+  card?: CardSummary | null
+  itemId?: string | null
+  renaissItemId?: string | null
+  certImages?: {
+    front?: string | null
+    back?: string | null
+    item?: string | null
+  } | null
+  collectible?: Record<string, unknown> | null
   reason?: string | null
   warning?: string | null
 }

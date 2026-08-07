@@ -52,9 +52,11 @@ const currency2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 const numberFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
 
-function formatUsdCents(cents?: number | null, decimals = 0) {
+function formatUsdCents(cents?: number | null, decimals?: number) {
   if (cents === undefined || cents === null || Number.isNaN(cents)) return '—'
-  return decimals > 0 ? currency2.format(cents / 100) : currency.format(cents / 100)
+  const amount = cents / 100
+  const precision = decimals ?? (Math.abs(amount) < 1000 ? 2 : 0)
+  return precision > 0 ? currency2.format(amount) : currency.format(amount)
 }
 
 function formatCompactUsdCents(cents?: number | null) {
@@ -114,7 +116,13 @@ function hasErrors(errors?: Record<string, string>) {
 
 function bestRateLimit(data?: BootstrapResponse, health?: RateLimit) {
   const limits = [health, ...Object.values(data?.rateLimits || {})].filter(Boolean) as RateLimit[]
-  return limits.find((item) => item.remaining !== undefined) || limits[0]
+  return limits.find((item) => item.remaining !== undefined && item.remaining !== null) || limits[0]
+}
+
+function externalCardUrl(href?: string | null) {
+  if (!href) return '#'
+  if (/^https?:\/\//i.test(href)) return href
+  return `https://renaissos.com${href.startsWith('/') ? href : `/${href}`}`
 }
 
 function gameLabel(game?: string | null) {
@@ -211,7 +219,7 @@ function ChartCanvas({ option, height }: { option: EChartsOption; height: number
 
 function SparklineChart({ values, positive, height = 70 }: { values: Array<number | null | undefined>; positive?: boolean; height?: number }) {
   const clean = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-  if (clean.length < 2) return <div className="h-[70px] rounded-2xl bg-[var(--bg-subtle)]" />
+  if (clean.length < 2) return <div className="rounded-2xl bg-[var(--bg-subtle)]" style={{ height }} />
   const lineColor = positive ? '#10b981' : '#fd4b96'
   const option: EChartsOption = {
     animation: false,
@@ -761,14 +769,14 @@ function CardDetailPanel({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-[var(--brand-10)] px-3 py-1 text-sm font-black text-[var(--brand-100)]">{detail.gradeLabel || detail.grade || 'Raw'}</span>
                   <span className={`rounded-full border px-3 py-1 text-xs font-bold uppercase ${confidenceTone(detail.confidence)}`}>{detail.confidence || 'confidence n/a'}</span>
-                  {detail.href && <a href={detail.href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-[var(--border-strong)] px-3 py-1 text-xs font-bold text-[var(--fg-subtle)] hover:text-[var(--brand-100)]">Open <ExternalLink className="h-3 w-3" /></a>}
+                  {detail.href && <a href={externalCardUrl(detail.href)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-[var(--border-strong)] px-3 py-1 text-xs font-bold text-[var(--fg-subtle)] hover:text-[var(--brand-100)]">Open <ExternalLink className="h-3 w-3" /></a>}
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <DetailMetric label="FMV" value={formatUsdCents(detail.priceUsdCents)} accent />
-              <DetailMetric label="30D" value={<DeltaBadge value={detail.deltas?.d30 || detail.deltaPct} />} />
+              <DetailMetric label="30D" value={<DeltaBadge value={detail.deltas?.d30 ?? detail.deltaPct} />} />
               <DetailMetric label="Sources" value={detail.sourceCount ?? detail.trackedSources?.length ?? '—'} />
               <DetailMetric label="Obs" value={detail.observationCount ?? detail.totalObservationCount ?? '—'} />
             </div>
@@ -945,7 +953,7 @@ export default function App() {
               SlabScout turns the Renaiss OS Index API into a Surf Studio dashboard for index monitoring, card search, cert lookup, FMV history, source quality, and recent realized sales.
             </p>
             <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              <DetailMetric label="Avg featured move" value={formatPct(heroStats.avgMove)} accent />
+              <DetailMetric label="Avg abs move" value={formatPct(heroStats.avgMove).replace(/^\+/, '')} accent />
               <DetailMetric label="Recent tape" value={formatUsdCents(heroStats.turnover)} />
               <DetailMetric label="Trades loaded" value={heroStats.tradeCount} />
             </div>

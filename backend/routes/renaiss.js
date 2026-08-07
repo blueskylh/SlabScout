@@ -4,8 +4,9 @@ const router = express.Router()
 
 const API_BASE_URL = String(process.env.RENAISS_API_BASE_URL || 'https://api.renaissos.com').replace(/\/+$/, '')
 const API_KEY = process.env.RENAISS_API_KEY || process.env.X_API_KEY || ''
-const API_SECRET = process.env.RENAISS_API_SECRET || process.env.RENAISS_API_SECRE || process.env.X_API_SECRET || ''
-const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.RENAISS_API_TIMEOUT_MS || '15000', 10)
+const API_SECRET = process.env.RENAISS_API_SECRET || process.env.RENAISS_API_SECRE || process.env.X_API_SECRET || process.env.X_API_SECRE || ''
+const parsedTimeoutMs = Number.parseInt(process.env.RENAISS_API_TIMEOUT_MS || '15000', 10)
+const DEFAULT_TIMEOUT_MS = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0 ? parsedTimeoutMs : 15000
 const CACHE_MAX_ITEMS = 240
 const cache = new Map()
 
@@ -150,7 +151,14 @@ function sendError(res, error) {
 
 function parseCardHref(href) {
   const cleanHref = safeString(href, 600)
-  const pathOnly = cleanHref.split('?')[0]
+  let pathOnly = cleanHref.split('?')[0]
+  if (/^https?:\/\//i.test(cleanHref)) {
+    try {
+      pathOnly = new URL(cleanHref).pathname
+    } catch (_) {
+      throw Object.assign(new Error('Invalid card URL'), { status: 400 })
+    }
+  }
   const parts = pathOnly.split('/').filter(Boolean)
   if (parts.length !== 4 || parts[0] !== 'card') {
     throw Object.assign(new Error('Expected card href shaped like /card/{game}/{set}/{card}'), { status: 400 })

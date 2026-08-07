@@ -14,8 +14,10 @@ export default defineConfig(() => {
   const backendProxy = {
     target: `http://127.0.0.1:${backendPort}`,
     changeOrigin: true,
-    ...(hasAbsBase && {
-      rewrite: (requestPath: string) => requestPath.replace(base, '/'),
+    ...(apiBasePrefix && {
+      rewrite: (requestPath: string) => requestPath.startsWith(apiBasePrefix)
+        ? requestPath.slice(apiBasePrefix.length) || '/'
+        : requestPath,
     }),
   }
 
