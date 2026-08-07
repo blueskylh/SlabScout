@@ -15,6 +15,7 @@ export function OfferSelector({ offers, selectedOfferId, onSelect }: Props) {
       <div className="mt-5 grid gap-3">
         {offers.map((offer) => {
           const active = offer.id === selectedOfferId
+          const askTone = offer.forceLowConfidence ? 'warn' : offer.askUsd <= 100 ? 'pass' : 'fail'
           return (
             <button
               key={offer.id}
@@ -24,7 +25,7 @@ export function OfferSelector({ offers, selectedOfferId, onSelect }: Props) {
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="font-black text-fg-base">{offer.title}</div>
-                <StatusPill tone={offer.forceLowConfidence ? 'warn' : offer.askUsd > 400 ? 'fail' : 'pass'}>
+                <StatusPill tone={askTone}>
                   ${offer.askUsd}
                 </StatusPill>
               </div>

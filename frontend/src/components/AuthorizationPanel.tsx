@@ -32,6 +32,18 @@ export function AuthorizationPanel({ authorization, onChange }: Props) {
         </label>
       </div>
 
+      <div className="mt-5 rounded-2xl border border-border-strong bg-bg-chat p-4 text-xs leading-6 text-fg-subtle">
+        <div className="font-black uppercase tracking-[0.16em] text-fg-muted">只读目标身份</div>
+        <div className="mt-2 grid gap-2 md:grid-cols-2">
+          <ReadOnly label="Card" value={authorization.targetCard} />
+          <ReadOnly label="Cert" value={authorization.certNumber || '—'} />
+          <ReadOnly label="Grade" value={authorization.gradeLabel || '—'} />
+          <ReadOnly label="Item ID" value={authorization.targetItemId || '—'} mono />
+          <ReadOnly label="Proof fee cap" value={`${authorization.maxIntelFeeUsdc} USDC`} />
+          <ReadOnly label="Deposit cap / daily budget" value={`${authorization.maxDepositUsdc} / ${authorization.dailyBudgetUsdc} USDC`} />
+        </div>
+      </div>
+
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         <label className="field-label">
           最高报价 USD
@@ -70,5 +82,14 @@ export function AuthorizationPanel({ authorization, onChange }: Props) {
         </label>
       </div>
     </section>
+  )
+}
+
+function ReadOnly({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="rounded-xl bg-bg-base px-3 py-2">
+      <span className="text-fg-muted">{label}: </span>
+      <span className={`font-bold text-fg-base ${mono ? 'font-mono text-[10px]' : ''}`}>{value}</span>
+    </div>
   )
 }

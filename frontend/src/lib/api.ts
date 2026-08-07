@@ -32,9 +32,11 @@ export function getDemoConfig() {
   return request<DemoConfig>('demo')
 }
 
-export function runScout(input: { mode: string; offerId: string; authorization: Authorization }) {
+export function runScout(input: { mode: string; offerId: string; authorization: Authorization; idempotencyKey?: string; operatorToken?: string }) {
+  const { operatorToken, ...body } = input
   return request<ScoutRunResult>('scout/run', {
     method: 'POST',
-    body: JSON.stringify(input),
+    headers: operatorToken ? { 'x-slabscout-operator-token': operatorToken } : undefined,
+    body: JSON.stringify(body),
   })
 }

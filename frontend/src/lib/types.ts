@@ -3,6 +3,7 @@ export type CheckStatus = 'pass' | 'warn' | 'fail'
 
 export interface Authorization {
   targetCard: string
+  displayLabel?: string
   targetItemId?: string
   targetRenaissItemId?: string
   targetHref?: string
@@ -31,6 +32,7 @@ export interface Offer {
   sellerAddress: string
   expiresAt: string
   targetCard: string
+  displayLabel?: string
   targetItemId?: string
   targetRenaissItemId?: string
   targetHref?: string
@@ -120,8 +122,15 @@ export interface Decision {
 
 export interface PaymentReceipt {
   status: string
+  providerStatus?: string
   confirmed?: boolean
+  simulated?: boolean
+  replayAccepted?: boolean
   receiptId: string | null
+  circlePaymentId?: string | null
+  txHash?: string | null
+  explorerUrl?: string | null
+  verification?: { ok: boolean; errors?: string[]; acceptance?: string }
   amountUsdc: number
   asset: string
   network: string
@@ -131,6 +140,7 @@ export interface PaymentReceipt {
 }
 
 export interface MarketProof {
+  proofKind?: 'MarketProof' | 'PolicyProof'
   proofVersion: string
   generatedAt: string
   proofHash: string
@@ -164,7 +174,9 @@ export interface EscrowReceipt {
   blockNumber?: number | null
   arcscanUrl?: string | null
   chainConfirmed?: boolean
-  event?: string
+  simulated?: boolean
+  replayAccepted?: boolean
+  event?: string | null
   note?: string
 }
 
@@ -179,6 +191,7 @@ export interface TimelineItem {
 
 export interface ScoutRunResult {
   runId: string
+  idempotencyKey?: string
   status: string
   mode: string
   executionStatus?: string

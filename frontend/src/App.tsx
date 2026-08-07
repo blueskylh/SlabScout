@@ -12,6 +12,7 @@ import type { Authorization, DemoConfig, Offer, ScoutRunResult } from './lib/typ
 
 const FALLBACK_AUTHORIZATION: Authorization = {
   targetCard: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
+  displayLabel: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
   targetItemId: '6e7fdc9a-8054-4034-bc02-8fb64209c688',
   targetRenaissItemId: '81d9d2d5-9adf-4f16-9bae-7fafabcce4ae',
   targetHref: '/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
@@ -25,8 +26,8 @@ const FALLBACK_AUTHORIZATION: Authorization = {
   minObservationCount: 5,
   maxLastSaleAgeDays: 14,
   maxMethodDeviationPct: 15,
-  maxIntelFeeUsdc: 0.01,
-  maxDepositUsdc: 0.5,
+  maxIntelFeeUsdc: 0.001,
+  maxDepositUsdc: 0.1,
   dailyBudgetUsdc: 1,
   spentTodayUsdc: 0,
   requireMarketProof: true,
@@ -37,6 +38,7 @@ const FALLBACK_OFFERS: Offer[] = [
     id: 'offer-reshizard-95',
     title: 'Seller A · verified discount',
     targetCard: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
+    displayLabel: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
     targetItemId: '6e7fdc9a-8054-4034-bc02-8fb64209c688',
     targetRenaissItemId: '81d9d2d5-9adf-4f16-9bae-7fafabcce4ae',
     targetHref: '/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
@@ -61,6 +63,7 @@ export default function App() {
   const [result, setResult] = useState<ScoutRunResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [operatorToken, setOperatorToken] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +88,7 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const next = await runScout({ mode, offerId: selectedOffer.id, authorization })
+      const next = await runScout({ mode, offerId: selectedOffer.id, authorization, operatorToken: mode === 'live' ? operatorToken : undefined })
       setResult(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -95,7 +98,7 @@ export default function App() {
   }
 
   const signal = result?.signal || demo?.replaySignal
-  const finalAction = result?.finalDecision.action || 'INVESTIGATE'
+  const finalAction = result?.finalDecision.action || null
 
   return (
     <main className="min-h-screen bg-bg-chat text-fg-base">
@@ -104,7 +107,7 @@ export default function App() {
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
               <div className="mb-4 flex flex-wrap gap-2">
-                <StatusPill tone={result ? finalAction : 'READY'}>{result ? finalAction : 'READY'}</StatusPill>
+                <StatusPill tone={result ? finalAction || 'READY' : 'READY'}>{result ? finalAction : 'READY'}</StatusPill>
                 <StatusPill tone="warn">Arc Testnet</StatusPill>
                 <StatusPill tone="pass">Renaiss backend-only</StatusPill>
               </div>
@@ -131,13 +134,22 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              {mode === 'live' ? (
+                <input
+                  className="rounded-2xl border border-border-strong bg-bg-base px-4 py-3 text-xs font-bold text-fg-base outline-none"
+                  type="password"
+                  placeholder="Operator token for live mode"
+                  value={operatorToken}
+                  onChange={(event) => setOperatorToken(event.target.value)}
+                />
+              ) : null}
               <button
                 type="button"
                 onClick={execute}
-                disabled={loading}
+                disabled={loading || (mode === 'live' && !operatorToken)}
                 className="rounded-2xl bg-brand-100 px-5 py-3 text-sm font-black text-white shadow-lg shadow-pink-500/20 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? 'Agent running…' : 'Run SlabScout Agent'}
+                {loading ? 'Agent running…' : mode === 'live' && !operatorToken ? 'Live requires operator token' : 'Run SlabScout Agent'}
               </button>
               <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；非证书类故障会进入 REPLAY_FALLBACK，但真实支付/锁仓会被禁止。</p>
             </div>
@@ -152,7 +164,7 @@ export default function App() {
           <MetricCard label="Proof fee" value="0.001 USDC" helper="Circle nanopayment demo adapter" />
           <MetricCard label="Demo deposit" value={`${selectedOffer?.depositUsdc || 0.1} USDC`} helper="Arc escrow reserve amount" />
           <MetricCard label="Offer ask" value={`$${selectedOffer?.askUsd || 0}`} helper={selectedOffer?.title || 'Seller offer'} />
-          <MetricCard label="Policy" value="V1.1" helper={`Decision: ${finalAction}`} />
+          <MetricCard label="Policy" value="V1.2" helper={finalAction ? `Decision: ${finalAction}` : 'not-run'} />
           <MetricCard label="Execution" value={result?.executionStatus || 'not-started'} helper="separate from policy decision" />
         </section>
 
