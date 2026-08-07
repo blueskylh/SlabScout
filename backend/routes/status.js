@@ -2,6 +2,7 @@ const router = require('express').Router()
 const { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS } = require('../../packages/shared')
 const { missingLivePaymentEnv, missingLiveEscrowEnv } = require('../lib/circle-adapters')
 const { persistenceBackend, persistentStoreConfigured, stateFile, stateFileWritable } = require('../lib/state-store')
+const { CIRCLE_CLI_VERIFIED_VERSION_RANGE } = require('../lib/circle-cli')
 
 function commandConfigured() {
   return process.env.CIRCLE_CLI_BIN || 'circle'
@@ -30,6 +31,7 @@ router.get('/', (_req, res) => {
     },
     circle: {
       cliCommand: commandConfigured(),
+      verifiedCliVersionRange: CIRCLE_CLI_VERIFIED_VERSION_RANGE,
       cliSessionRequired: true,
       agentWalletConfigured: Boolean(process.env.CIRCLE_AGENT_WALLET_ADDRESS || process.env.AGENT_WALLET_ADDRESS),
       gatewayBalanceCheck: 'run circle gateway balance --address <wallet> --chain ARC-TESTNET',
@@ -40,7 +42,7 @@ router.get('/', (_req, res) => {
     escrow: {
       deployed: Boolean(process.env.RESERVATION_ESCROW_ADDRESS),
       address: process.env.RESERVATION_ESCROW_ADDRESS || null,
-      rpcUrl: process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.io',
+      rpcUrl: process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.network',
     },
     liveExecutionAvailable: liveMissing.length === 0 && process.env.CIRCLE_MODE === 'live' && process.env.ARC_EXECUTION_MODE === 'live',
     liveMissingEnv: liveMissing,

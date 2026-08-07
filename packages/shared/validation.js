@@ -12,6 +12,28 @@ const {
 } = require('./constants')
 
 const CERT_RE = /^[a-zA-Z0-9-]{4,64}$/
+const AUTHORIZATION_FIELDS = Object.freeze([
+  'targetCard',
+  'displayLabel',
+  'targetItemId',
+  'targetRenaissItemId',
+  'targetHref',
+  'certNumber',
+  'company',
+  'gradeLabel',
+  'maxOfferUsd',
+  'maxPriceVsMedianPct',
+  'minConfidence',
+  'minSourceCount',
+  'minObservationCount',
+  'maxLastSaleAgeDays',
+  'maxMethodDeviationPct',
+  'maxIntelFeeUsdc',
+  'maxDepositUsdc',
+  'dailyBudgetUsdc',
+  'spentTodayUsdc',
+  'requireMarketProof',
+])
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -37,6 +59,19 @@ function validProofHash(value) {
 
 function validateEnum(value, allowed, field, errors) {
   if (!allowed.includes(value)) errors.push(`${field} must be one of: ${allowed.join(', ')}`)
+}
+
+function pickAuthorizationFields(input = {}) {
+  const auth = isPlainObject(input) ? input : {}
+  return AUTHORIZATION_FIELDS.reduce((out, field) => {
+    if (Object.prototype.hasOwnProperty.call(auth, field)) out[field] = auth[field]
+    return out
+  }, {})
+}
+
+function unknownAuthorizationFields(input = {}) {
+  const auth = isPlainObject(input) ? input : {}
+  return Object.keys(auth).filter((field) => !AUTHORIZATION_FIELDS.includes(field))
 }
 
 function validateAuthorization(input = {}) {
@@ -158,8 +193,11 @@ function identityMatches({ authorization, offer, certLookup, cardDetail }) {
 module.exports = {
   EVM_ADDRESS_RE,
   CERT_RE,
+  AUTHORIZATION_FIELDS,
   finiteNumber,
   positiveNumber,
+  pickAuthorizationFields,
+  unknownAuthorizationFields,
   nonZeroAddress,
   validProofHash,
   validateAuthorization,

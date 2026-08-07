@@ -89,7 +89,7 @@ function sameDay(a, b = new Date()) {
 
 function activeDailySpend(state, owner, now = new Date()) {
   const held = Object.values(state.budgetHolds)
-    .filter((hold) => hold.owner === owner && hold.status === 'held' && sameDay(hold.createdAt, now))
+    .filter((hold) => hold.owner === owner && ['held', 'reconciliation-held'].includes(hold.status) && sameDay(hold.createdAt, now))
     .reduce((sum, hold) => sum + Number(hold.amountUsdc || 0), 0)
   const settledPayments = Object.values(state.payments)
     .filter((payment) => payment.owner === owner && payment.budgetImpact === true && sameDay(payment.savedAt, now))

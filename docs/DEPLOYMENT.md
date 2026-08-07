@@ -42,13 +42,13 @@ MARKET_PROOF_SELLER_ADDRESS=<seller wallet receiving x402 payments>
 CIRCLE_GATEWAY_FACILITATOR_URL=https://gateway-api-testnet.circle.com
 ```
 
-The Circle CLI must be installed on the backend host and already authenticated to the intended testnet Agent Wallet context. The app invokes the CLI through `execFile` with argument arrays, not shell string concatenation.
+The Circle CLI must be installed on the backend host and already authenticated to the intended testnet Agent Wallet context. The app invokes the CLI through `execFile` with argument arrays, not shell string concatenation. The parser is verified against Circle CLI `0.0.6` JSON envelopes and parses raw stdout before sanitizing error/log output.
 
 Live Arc escrow readiness:
 
 ```bash
 ARC_EXECUTION_MODE=live
-ARC_RPC_URL=https://rpc.testnet.arc.io
+ARC_RPC_URL=https://rpc.testnet.arc.network
 AGENT_WALLET_ADDRESS=<same funded Arc Testnet agent wallet>
 RESERVATION_ESCROW_ADDRESS=<deployed escrow contract>
 SELLER_WALLET_ADDRESS=<seller testnet address>
@@ -106,7 +106,7 @@ Live MarketProof payment uses Circle Gateway nanopayments / x402 seller middlewa
 4. After the gateway verifies/settles payment, the seller endpoint refetches Renaiss data server-side and signs MarketProof.
 5. The buyer side re-verifies the returned payment receipt and MarketProof before escrow.
 
-Any unknown Circle CLI result enters `reconciliation_required`; operators must reconcile externally before retrying with a new idempotency key.
+Any unknown Circle CLI result or submitted transaction receipt timeout enters `reconciliation_required`; operators must reconcile externally before retrying with a new idempotency key. Budget holds remain marked as reconciliation-held rather than released as ordinary failures.
 
 ## Arc escrow flow
 
@@ -117,7 +117,7 @@ Live reserve uses Circle CLI wallet execution plus Arc RPC verification:
 3. Check whether the offerHash is already reserved; if yes, return `reconciliation_required` instead of sending a duplicate tx.
 4. Check USDC allowance from Agent Wallet to `ReservationEscrow`.
 5. If allowance is insufficient, call `approve(address,uint256)` through Circle CLI and wait for the tx receipt.
-6. Call `reserve(bytes32,address,uint256,bytes32,uint64)` through Circle CLI.
+6. Call `reserve(bytes32,address,uint256,bytes32,uint64)` through Circle CLI with external idempotency key `<run-id>:reserve:<offer-hash>`. Approval uses `<run-id>:approve:<offer-hash>`.
 7. Wait for the reserve receipt and decode the `Reserved` event.
 8. Mark `chain-confirmed` only if receipt status and every event field match the expected offerHash, buyer, seller, amount, proofHash and refundAfter.
 

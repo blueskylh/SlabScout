@@ -1,3 +1,4 @@
+import { liveRunBody } from './idempotency'
 import type { Authorization, DemoConfig, ScoutRunResult } from './types'
 
 function apiUrl(path: string) {
@@ -33,7 +34,8 @@ export function getDemoConfig() {
 }
 
 export function runScout(input: { mode: string; offerId: string; authorization: Authorization; idempotencyKey?: string; operatorToken?: string }) {
-  const { operatorToken, ...body } = input
+  const { operatorToken, ...bodyInput } = input
+  const body = liveRunBody(bodyInput)
   return request<ScoutRunResult>('scout/run', {
     method: 'POST',
     headers: operatorToken ? { 'x-slabscout-operator-token': operatorToken } : undefined,

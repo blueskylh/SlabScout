@@ -80,3 +80,14 @@ This pass continued from baseline `ccc4d519fc9c7d9f6fbb07bd00a9da7a303af03b` and
 4. **Circle CLI buyer pass** — added a bounded `execFile` Circle CLI wrapper for `services pay`, Gateway balance/status helpers, and wallet contract execution, with sanitized output and reconciliation-required handling for unknown results.
 5. **Arc RPC pass** — added Arc chain ID checks, USDC allowance reads, reservation reads, tx receipt polling, and `Reserved` event validation before marking escrow chain-confirmed.
 6. **Regression pass** — added HTTP and verifier tests for mode bypass, live operator token handling, idempotency requirements, bad cert flags, targetCard mismatch, bad live payer/payee/provider status, and concurrent live payment intent locking.
+
+## P0 live safety continuation pass
+
+This pass continued on `final/agentic-economy-mvp` without merging `main` and without executing any real payment or reserve transaction.
+
+1. **Frontend idempotency pass** — Live UI now generates a live idempotency key before calling `/api/scout/run`; retry after network failure reuses the pending key, while successful runs and explicit offer/auth/mode changes clear it.
+2. **Circle CLI parsing pass** — CLI stdout is parsed before any sanitization; sanitization is limited to error/log boundaries and no longer redacts ordinary txHash/proofHash/blockHash values. The adapter records Circle CLI `0.0.6` as the verified JSON envelope target and normalizes `data.txHash`, `data.response`, and quiet seller responses.
+3. **Seller authorization pass** — the x402 seller endpoint requires `mode: "live"`, rejects unknown authorization fields, applies server caps, forces `spentTodayUsdc=0`, and returns the exact authorization snapshot used to sign the proof.
+4. **Arc RPC/reconciliation pass** — the default RPC moved to `https://rpc.testnet.arc.network`; approve/reserve calls carry stable external idempotency keys; submitted tx receipt timeouts return `reconciliation_required` with tx metadata instead of ordinary failure.
+5. **Audit privacy pass** — unauthorized audit fallback now redacts memory-log fallback rows instead of returning full checks or payment receipt details.
+6. **Regression pass** — added tests for frontend live idempotency, Circle CLI hash/sanitization behavior, seller proof flow, Arc RPC default, receipt timeout reconciliation, and unauthorized audit redaction.

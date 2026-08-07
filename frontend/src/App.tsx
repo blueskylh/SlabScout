@@ -8,6 +8,7 @@ import { SignalPanel } from './components/SignalPanel'
 import { StatusPill } from './components/StatusPill'
 import { Timeline } from './components/Timeline'
 import { getDemoConfig, runScout } from './lib/api'
+import { createLiveIdempotencyKey } from './lib/idempotency'
 import type { Authorization, DemoConfig, Offer, ScoutRunResult } from './lib/types'
 
 const FALLBACK_AUTHORIZATION: Authorization = {
@@ -64,6 +65,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [operatorToken, setOperatorToken] = useState('')
+  const [pendingLiveIdempotencyKey, setPendingLiveIdempotencyKey] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -88,8 +90,11 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const next = await runScout({ mode, offerId: selectedOffer.id, authorization, operatorToken: mode === 'live' ? operatorToken : undefined })
+      const liveKey = mode === 'live' ? (pendingLiveIdempotencyKey || createLiveIdempotencyKey(selectedOffer.id)) : undefined
+      if (mode === 'live' && liveKey && !pendingLiveIdempotencyKey) setPendingLiveIdempotencyKey(liveKey)
+      const next = await runScout({ mode, offerId: selectedOffer.id, authorization, idempotencyKey: liveKey, operatorToken: mode === 'live' ? operatorToken : undefined })
       setResult(next)
+      if (mode === 'live') setPendingLiveIdempotencyKey(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -127,6 +132,7 @@ export default function App() {
                     onClick={() => {
                       setMode(item)
                       setResult(null)
+                      setPendingLiveIdempotencyKey(null)
                     }}
                     className={`rounded-xl px-4 py-2 text-sm font-black transition ${mode === item ? 'bg-bg-base text-brand-100 shadow-sm' : 'text-fg-subtle hover:text-fg-base'}`}
                   >
@@ -172,10 +178,12 @@ export default function App() {
           <AuthorizationPanel authorization={authorization} onChange={(next) => {
             setAuthorization(next)
             setResult(null)
+            setPendingLiveIdempotencyKey(null)
           }} />
           <OfferSelector offers={offers} selectedOfferId={selectedOfferId} onSelect={(id) => {
             setSelectedOfferId(id)
             setResult(null)
+            setPendingLiveIdempotencyKey(null)
           }} />
         </div>
 

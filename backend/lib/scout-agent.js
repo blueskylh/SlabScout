@@ -7,7 +7,7 @@ const {
   MAX_MARKET_PROOF_FEE_USDC,
   MAX_ESCROW_DEPOSIT_USDC,
 } = require('../../packages/shared')
-const { validateAuthorization, validateOffer, validateRuntimeConfig, assertValid } = require('../../packages/shared/validation')
+const { validateAuthorization, validateOffer, validateRuntimeConfig, assertValid, pickAuthorizationFields } = require('../../packages/shared/validation')
 const { getCardSignal } = require('../../packages/renaiss-client')
 const { evaluateSignal, finalizeWithProof } = require('../../packages/policy-engine')
 const { buildMarketProof, buildPolicyProof, verifyMarketProof, assertLiveSigningSecret } = require('../../packages/market-proof')
@@ -44,11 +44,10 @@ function serverDailyBudgetCap() {
 }
 
 function mergeAuthorization(input = {}) {
-  const safeInput = input && typeof input === 'object' ? input : {}
+  const safeInput = pickAuthorizationFields(input)
   return {
     ...DEFAULT_AUTHORIZATION,
     ...safeInput,
-    owner: undefined,
     spentTodayUsdc: 0,
     maxOfferUsd: finiteOrDefault(safeInput.maxOfferUsd, DEFAULT_AUTHORIZATION.maxOfferUsd),
     maxPriceVsMedianPct: finiteOrDefault(safeInput.maxPriceVsMedianPct, DEFAULT_AUTHORIZATION.maxPriceVsMedianPct),
@@ -255,7 +254,9 @@ async function runScout(body = {}) {
       pushTimeline(timeline, '支付保护', 'blocked', '硬门槛失败，未购买 MarketProof，未锁订金。')
     }
 
-    if (finalDecision.action === 'REJECT' || !escrow?.chainConfirmed) await stateStore.releaseBudget(id)
+    const needsReconciliation = payment?.status === 'reconciliation_required' || escrow?.status === 'reconciliation_required'
+    if (needsReconciliation) await stateStore.releaseBudget(id, 'reconciliation-held')
+    else if (finalDecision.action === 'REJECT' || !escrow?.chainConfirmed) await stateStore.releaseBudget(id)
     else await stateStore.releaseBudget(id, 'settled')
 
     const result = {

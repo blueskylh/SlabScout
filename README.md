@@ -42,7 +42,7 @@ Implemented after baseline `c14a5b4` and hardened further on `final/agentic-econ
 - `400 / 401 / 404` cert errors are hard `REJECT`, not replay fallback.
 - Network/5xx Renaiss fallback is `REPLAY_FALLBACK` and blocks payment/proof/escrow.
 - Public `/api/scout/run` accepts only trusted `offerId`; `body.offer` is rejected.
-- Live `/api/scout/run` requires an operator token with timing-safe comparison before any Renaiss, Circle, or Arc call; invalid public modes such as `live-cache` are rejected.
+- Live `/api/scout/run` requires an operator token with timing-safe comparison before any Renaiss, Circle, or Arc call; invalid public modes such as `live-cache` are rejected, and frontend live runs always include an idempotency key.
 - MarketProof verifier ignores caller-supplied `verified` / `verification.ok`; it recalculates canonical hash, HMAC, offer/cert/payment/TTL/mode bindings.
 - Payment verifier rejects `status=paid` unless provider confirmation, receipt/tx, chain, asset, payer/payee, idempotency and amount bindings pass.
 - Replay payment uses `replay-payment-simulated`, `confirmed=false`, `simulated=true`; replay escrow uses `chainConfirmed=false` and no tx/explorer evidence.
@@ -53,7 +53,7 @@ Implemented after baseline `c14a5b4` and hardened further on `final/agentic-econ
 
 Not yet complete because external credentials/funds/deployment are missing:
 
-- Real Circle Agent Wallet/x402 payment is wired through Circle CLI + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured.
+- Real Circle Agent Wallet/x402 payment is wired through Circle CLI `0.0.6`-style envelopes + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured.
 - Real Arc escrow reserve is wired through Circle CLI `approve`/`reserve` plus Arc RPC receipt/event verification, but remains unavailable until the escrow contract is deployed and the wallet is funded/authorized.
 - Public MVP URL, video, deck export link and real tx evidence are pending user/deployment steps.
 

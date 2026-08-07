@@ -1,14 +1,19 @@
 const router = require('express').Router()
 const { buildMarketProof, verifyMarketProof } = require('../../packages/market-proof')
-const { DEFAULT_AUTHORIZATION, DEMO_OFFERS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS, ARC_TESTNET_NAME } = require('../../packages/shared')
+const { DEMO_OFFERS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS, ARC_TESTNET_NAME } = require('../../packages/shared')
+const { validateAuthorization, assertValid, unknownAuthorizationFields } = require('../../packages/shared/validation')
 const { getCardSignal } = require('../../packages/renaiss-client')
+const { mergeAuthorization } = require('../lib/scout-agent')
 const { resolveEffectiveMode } = require('../lib/mode')
 const { rateLimit } = require('../lib/rate-limit')
 
 function strictProofRequest(req, _res, next) {
   try {
-    req.effectiveMode = resolveEffectiveMode(req.body?.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
+    if (req.body?.mode !== 'live') throw new Error('mode: "live" is required for paid MarketProof generation')
+    req.effectiveMode = resolveEffectiveMode(req.body.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
     if (req.body.signal || req.body.valuation || req.body.trades) throw new Error('client-submitted signal/valuation/trades are not accepted')
+    const unknownAuth = unknownAuthorizationFields(req.body.authorization || {})
+    if (unknownAuth.length > 0) throw new Error(`unsupported authorization fields: ${unknownAuth.join(', ')}`)
     const allowed = ['offerId', 'runId', 'idempotencyKey', 'mode', 'authorization']
     const extras = Object.keys(req.body || {}).filter((key) => !allowed.includes(key))
     if (extras.length > 0) throw new Error(`unsupported proof request fields: ${extras.join(', ')}`)
@@ -109,41 +114,13 @@ router.post('/prove', rateLimit({ windowMs: 60_000, max: 30 }), strictProofReque
   createGatewayMiddleware()(req, res, next)
 }, async (req, res, next) => {
   try {
-    const mode = req.effectiveMode
-    const authorization = { ...DEFAULT_AUTHORIZATION, ...(req.body.authorization || {}), spentTodayUsdc: 0 }
-    const offer = DEMO_OFFERS.find((item) => item.id === req.body.offerId)
-    if (!offer) throw new Error('known offerId is required')
-    const runId = req.body.runId
-    const idempotencyKey = req.body.idempotencyKey
-    const payment = paidRequestToPayment(req, { offer, runId, idempotencyKey })
-
-    const proofSignal = await getCardSignal({ mode, card: offer.card, offer, authorization })
-    if (proofSignal.dataMode === 'REPLAY_FALLBACK') {
-      res.status(503).json({ error: 'Renaiss fallback blocks paid proof generation' })
-      return
-    }
-    if (proofSignal.identity?.certFound !== true || proofSignal.identity?.certMatchesOffer !== true) {
-      res.status(422).json({ error: 'cert/card/offer identity mismatch' })
-      return
-    }
-    const proof = buildMarketProof({ signal: proofSignal, offer, authorization, payment, runId, idempotencyKey })
-    const verification = await verifyMarketProof({
-      proof,
-      offer,
-      authorization,
-      payment,
-      runId,
-      idempotencyKey,
-      expectedMode: mode,
-      expectedPayerWallet: payment.payerWallet,
-      expectedPayeeAddress: process.env.MARKET_PROOF_SELLER_ADDRESS,
-    })
-    if (!verification.ok) {
-      res.status(422).json({ error: 'MarketProof self-verification failed', verification })
-      return
-    }
-    res.json({ payment, proof: verification.proof, verification })
+    const payload = await buildSellerProofResponse({ body: req.body, payment: paidRequestToPayment(req, { offer: DEMO_OFFERS.find((item) => item.id === req.body.offerId) || {}, runId: req.body.runId, idempotencyKey: req.body.idempotencyKey }) })
+    res.json(payload)
   } catch (error) {
+    if (error.statusCode) {
+      res.status(error.statusCode).json({ error: error.message, verification: error.verification || undefined })
+      return
+    }
     next(error)
   }
 })
@@ -152,4 +129,60 @@ router.use((error, _req, res, _next) => {
   res.status(error.statusCode || 400).json({ error: 'MarketProof failed', message: error.message })
 })
 
+async function buildSellerProofResponse({ body, payment }) {
+  const mode = resolveEffectiveMode(body.mode, process.env.SLABSCOUT_DEFAULT_MODE || 'replay')
+  if (mode !== 'live') {
+    const error = new Error('mode: "live" is required for paid MarketProof generation')
+    error.statusCode = 400
+    throw error
+  }
+  const offer = DEMO_OFFERS.find((item) => item.id === body.offerId)
+  if (!offer) {
+    const error = new Error('known offerId is required')
+    error.statusCode = 400
+    throw error
+  }
+  const unknownAuth = unknownAuthorizationFields(body.authorization || {})
+  if (unknownAuth.length > 0) {
+    const error = new Error(`unsupported authorization fields: ${unknownAuth.join(', ')}`)
+    error.statusCode = 400
+    throw error
+  }
+  const authorization = mergeAuthorization(body.authorization || {})
+  assertValid('authorization', validateAuthorization(authorization))
+  const runId = body.runId
+  const idempotencyKey = body.idempotencyKey
+  const proofSignal = await getCardSignal({ mode, card: offer.card, offer, authorization })
+  if (proofSignal.dataMode === 'REPLAY_FALLBACK') {
+    const error = new Error('Renaiss fallback blocks paid proof generation')
+    error.statusCode = 503
+    throw error
+  }
+  if (proofSignal.identity?.certFound !== true || proofSignal.identity?.certMatchesOffer !== true) {
+    const error = new Error('cert/card/offer identity mismatch')
+    error.statusCode = 422
+    throw error
+  }
+  const proof = buildMarketProof({ signal: proofSignal, offer, authorization, payment, runId, idempotencyKey })
+  const verification = await verifyMarketProof({
+    proof,
+    offer,
+    authorization,
+    payment,
+    runId,
+    idempotencyKey,
+    expectedMode: mode,
+    expectedPayerWallet: payment.payerWallet,
+    expectedPayeeAddress: process.env.MARKET_PROOF_SELLER_ADDRESS,
+  })
+  if (!verification.ok) {
+    const error = new Error('MarketProof self-verification failed')
+    error.statusCode = 422
+    error.verification = verification
+    throw error
+  }
+  return { payment, proof: verification.proof, verification, authorization }
+}
+
 module.exports = router
+module.exports._internals = { strictProofRequest, paidRequestToPayment, buildSellerProofResponse, createGatewayMiddleware }

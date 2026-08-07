@@ -7,11 +7,12 @@ const {
   ARC_TESTNET_NAME,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
 } = require('../../packages/shared')
-const { nonZeroAddress, validProofHash, validateRuntimeConfig, assertValid } = require('../../packages/shared/validation')
+const { nonZeroAddress, validProofHash, validateRuntimeConfig, assertValid, pickAuthorizationFields } = require('../../packages/shared/validation')
 const { verifyMarketProof, verifyPolicyProof, verifyPaymentReceipt } = require('../../packages/market-proof')
 const { persistentStoreConfigured } = require('./state-store')
-const { circleServicesPay, circleWalletExecute } = require('./circle-cli')
-const { assertArcChain, getAllowance, getReservation, waitForReceipt, validateReservedEvent, RPC_URL } = require('./arc-rpc')
+const { circleServicesPay, circleWalletExecute, normalizeServicesPayResult } = require('./circle-cli')
+const defaultArcOps = require('./arc-rpc')
+const { assertArcChain, getAllowance, getReservation, waitForReceipt, validateReservedEvent, RPC_URL } = defaultArcOps
 
 function deterministicHash(prefix, payload) {
   return `${prefix}${crypto.createHash('sha256').update(stableJson(payload)).digest('hex')}`
@@ -27,6 +28,10 @@ function assertBaseRuntimeConfig({ live = false } = {}) {
   assertValid('runtime config', validateRuntimeConfig(process.env, { live }))
 }
 
+function authorizationSnapshot(authorization) {
+  return { ...pickAuthorizationFields(authorization), spentTodayUsdc: 0 }
+}
+
 function missingLivePaymentEnv() {
   const required = ['CIRCLE_AGENT_WALLET_ADDRESS', 'MARKET_PROOF_SERVICE_URL', 'MARKET_PROOF_SELLER_ADDRESS']
   if (!persistentStoreConfigured()) required.push('SLABSCOUT_STATE_FILE')
@@ -39,7 +44,7 @@ function missingLiveEscrowEnv() {
   return required.filter((key) => !process.env[key])
 }
 
-function reconciliationPayment({ receiptPayload, reason }) {
+function reconciliationPayment({ receiptPayload, reason, operation = 'services-pay', circleTransactionId = null, txHash = null }) {
   return {
     ...receiptPayload,
     status: 'reconciliation_required',
@@ -47,10 +52,11 @@ function reconciliationPayment({ receiptPayload, reason }) {
     confirmed: false,
     simulated: false,
     replayAccepted: false,
-    receiptId: null,
-    circlePaymentId: null,
-    txHash: null,
+    receiptId: circleTransactionId || txHash || null,
+    circlePaymentId: circleTransactionId,
+    txHash,
     explorerUrl: null,
+    operation,
     verification: { ok: false, errors: [reason] },
     note: 'Payment state is unknown. Do not retry automatically; reconcile with Circle CLI/Gateway status first.',
   }
@@ -70,6 +76,7 @@ function normalizeSellerPayment({ sellerResponse, receiptPayload }) {
     payeeAddress: source.payeeAddress || source.sellerAddress || process.env.MARKET_PROOF_SELLER_ADDRESS || null,
     amountUsdc: source.amountUsdc,
     network: source.network,
+    providerNetwork: source.providerNetwork || source.networkId || null,
     chainId: source.chainId,
     asset: source.asset,
     usdcAddress: source.usdcAddress,
@@ -78,7 +85,7 @@ function normalizeSellerPayment({ sellerResponse, receiptPayload }) {
     dataMode: receiptPayload.dataMode,
     status: source.status || 'x402-payment-confirmed',
     providerStatus: source.providerStatus || (source.verified ? 'confirmed' : null),
-    confirmed: source.confirmed === true,
+    confirmed: source.confirmed === true || source.verified === true,
     simulated: false,
     replayAccepted: false,
     receiptId: source.receiptId || source.settlementId || source.transaction || null,
@@ -182,7 +189,8 @@ async function payForMarketProof({ runId, idempotencyKey, offer, authorization, 
       chain: 'ARC-TESTNET',
       maxAmountUsdc: amountUsdc,
       method: 'POST',
-      data: { offerId: offer.id, runId, idempotencyKey },
+      data: { mode: 'live', offerId: offer.id, runId, idempotencyKey, authorization: authorizationSnapshot(authorization) },
+      idempotencyKey,
       timeoutSeconds: Number(process.env.CIRCLE_CLI_TIMEOUT_SECONDS || 60),
     })
   } catch (error) {
@@ -202,11 +210,12 @@ async function payForMarketProof({ runId, idempotencyKey, offer, authorization, 
         note: 'Install and login Circle CLI testnet agent wallet before live payment.',
       }
     }
-    return reconciliationPayment({ receiptPayload, reason: error.message })
+    return reconciliationPayment({ receiptPayload, reason: error.message, circleTransactionId: error.circleTransactionId || null, txHash: error.txHash || null })
   }
 
-  if (!paid.parsed || !paid.parsed.payment || !paid.parsed.proof) return reconciliationPayment({ receiptPayload, reason: 'Circle services pay did not return parseable seller payment/proof response' })
-  const payment = normalizeSellerPayment({ sellerResponse: paid.parsed, receiptPayload })
+  const servicesPay = paid.servicesPay || normalizeServicesPayResult(paid)
+  if (!servicesPay.ok || !servicesPay.sellerResponse?.payment || !servicesPay.sellerResponse?.proof) return reconciliationPayment({ receiptPayload, reason: 'Circle services pay did not return parseable seller payment/proof response' })
+  const payment = normalizeSellerPayment({ sellerResponse: servicesPay.sellerResponse, receiptPayload })
   const verification = await verifyPaymentReceipt({
     payment,
     runId,
@@ -224,7 +233,27 @@ function amountMinorUsdc(amountUsdc) {
   return BigInt(Math.round(Number(amountUsdc) * 1_000_000))
 }
 
-async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorization, dataMode = 'live', payment = null, decision = null }) {
+function reconciliationReservation({ payload, offerHash, verification, operation, reason, txHash = null, circleTransactionId = null, externalIdempotencyKey = null }) {
+  return {
+    ...payload,
+    offerHash,
+    txHash,
+    circleTransactionId,
+    operation,
+    externalIdempotencyKey,
+    blockNumber: null,
+    arcscanUrl: null,
+    status: 'reconciliation_required',
+    chainConfirmed: false,
+    simulated: false,
+    replayAccepted: false,
+    event: null,
+    note: `${operation} transaction state is unknown: ${reason}. Do not retry automatically; reconcile Circle and Arc state first.`,
+    verification,
+  }
+}
+
+async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorization, dataMode = 'live', payment = null, decision = null, walletExecute = circleWalletExecute, arcOps = defaultArcOps }) {
   assertBaseRuntimeConfig({ live: dataMode !== 'replay' && process.env.ARC_EXECUTION_MODE === 'live' })
   const amountUsdc = positiveNumber(offer.depositUsdc)
   const maxDepositUsdc = positiveNumber(authorization.maxDepositUsdc)
@@ -316,8 +345,8 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
   }
 
   if (!nonZeroAddress(payload.seller) || !nonZeroAddress(payload.buyer) || !nonZeroAddress(payload.escrow)) throw new Error('Live escrow requires non-zero seller, buyer, and escrow EVM addresses')
-  await assertArcChain({ rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
-  const existing = await getReservation({ escrow: payload.escrow, offerHash, rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
+  await arcOps.assertArcChain({ rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
+  const existing = await arcOps.getReservation({ escrow: payload.escrow, offerHash, rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
   if (existing.status !== 0) {
     return {
       ...payload,
@@ -335,47 +364,70 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
     }
   }
 
-  const allowance = await getAllowance({ owner: payload.buyer, spender: payload.escrow, token: payload.usdc, rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
+  const allowance = await arcOps.getAllowance({ owner: payload.buyer, spender: payload.escrow, token: payload.usdc, rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
+  const approveIdempotencyKey = `${runId}:approve:${offerHash}`
+  const reserveIdempotencyKey = `${runId}:reserve:${offerHash}`
   if (allowance < amountMinor) {
-    const approval = await circleWalletExecute({
-      signature: 'approve(address,uint256)',
-      params: [payload.escrow, amountMinor.toString()],
-      contract: payload.usdc,
-      address: payload.buyer,
-      chain: 'ARC-TESTNET',
-      rpcUrl: process.env.ARC_RPC_URL || RPC_URL,
-    })
-    if (!approval.txHash) throw new Error('Circle CLI approve did not return a transaction hash')
-    const approvalReceipt = await waitForReceipt(approval.txHash, { rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
-    if (approvalReceipt.status !== '0x1') throw new Error('USDC approve transaction failed')
+    let approval
+    try {
+      approval = await walletExecute({
+        signature: 'approve(address,uint256)',
+        params: [payload.escrow, amountMinor.toString()],
+        contract: payload.usdc,
+        address: payload.buyer,
+        chain: 'ARC-TESTNET',
+        rpcUrl: process.env.ARC_RPC_URL || RPC_URL,
+        idempotencyKey: approveIdempotencyKey,
+      })
+      if (!approval.txHash) throw new Error('Circle CLI approve did not return a transaction hash')
+      const approvalReceipt = await arcOps.waitForReceipt(approval.txHash, { rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
+      if (approvalReceipt.status !== '0x1') throw new Error('USDC approve transaction failed')
+    } catch (error) {
+      if (approval?.txHash || error.txHash || error.code === 'circle-cli-timeout') {
+        return reconciliationReservation({ payload, offerHash, verification, operation: 'approve', reason: error.message, txHash: approval?.txHash || error.txHash || null, circleTransactionId: approval?.circleTransactionId || error.circleTransactionId || null, externalIdempotencyKey: approveIdempotencyKey })
+      }
+      throw error
+    }
   }
 
   const refundAfter = BigInt(Math.floor(Date.now() / 1000) + Number(process.env.ESCROW_REFUND_AFTER_SECONDS || 7 * 24 * 60 * 60))
-  const reserve = await circleWalletExecute({
-    signature: 'reserve(bytes32,address,uint256,bytes32,uint64)',
-    params: [offerHash, payload.seller, amountMinor.toString(), proof.proofHash, refundAfter.toString()],
-    contract: payload.escrow,
-    address: payload.buyer,
-    chain: 'ARC-TESTNET',
-    rpcUrl: process.env.ARC_RPC_URL || RPC_URL,
-  })
-  if (!reserve.txHash) throw new Error('Circle CLI reserve did not return a transaction hash')
-  const receipt = await waitForReceipt(reserve.txHash, { rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
-  const event = validateReservedEvent({ receipt, offerHash, buyer: payload.buyer, seller: payload.seller, amountMinor, proofHash: proof.proofHash, refundAfter })
-  const blockNumber = Number(BigInt(receipt.blockNumber))
-  return {
-    ...payload,
-    offerHash,
-    txHash: reserve.txHash,
-    blockNumber,
-    arcscanUrl: `https://testnet.arcscan.app/tx/${reserve.txHash}`,
-    status: 'chain-confirmed',
-    chainConfirmed: true,
-    simulated: false,
-    replayAccepted: false,
-    event: { name: 'Reserved', args: { offerId: offerHash, buyer: payload.buyer, seller: payload.seller, amount: amountMinor.toString(), proofHash: proof.proofHash, refundAfter: refundAfter.toString() }, logIndex: event.logIndex },
-    note: 'Arc Testnet escrow reserve confirmed and Reserved event matched.',
-    verification,
+  let reserve
+  try {
+    reserve = await walletExecute({
+      signature: 'reserve(bytes32,address,uint256,bytes32,uint64)',
+      params: [offerHash, payload.seller, amountMinor.toString(), proof.proofHash, refundAfter.toString()],
+      contract: payload.escrow,
+      address: payload.buyer,
+      chain: 'ARC-TESTNET',
+      rpcUrl: process.env.ARC_RPC_URL || RPC_URL,
+      idempotencyKey: reserveIdempotencyKey,
+    })
+    if (!reserve.txHash) throw new Error('Circle CLI reserve did not return a transaction hash')
+    const receipt = await arcOps.waitForReceipt(reserve.txHash, { rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
+    const event = arcOps.validateReservedEvent({ receipt, offerHash, buyer: payload.buyer, seller: payload.seller, amountMinor, proofHash: proof.proofHash, refundAfter })
+    const blockNumber = Number(BigInt(receipt.blockNumber))
+    return {
+      ...payload,
+      offerHash,
+      txHash: reserve.txHash,
+      circleTransactionId: reserve.circleTransactionId || null,
+      operation: 'reserve',
+      externalIdempotencyKey: reserveIdempotencyKey,
+      blockNumber,
+      arcscanUrl: `https://testnet.arcscan.app/tx/${reserve.txHash}`,
+      status: 'chain-confirmed',
+      chainConfirmed: true,
+      simulated: false,
+      replayAccepted: false,
+      event: { name: 'Reserved', args: { offerId: offerHash, buyer: payload.buyer, seller: payload.seller, amount: amountMinor.toString(), proofHash: proof.proofHash, refundAfter: refundAfter.toString() }, logIndex: event.logIndex },
+      note: 'Arc Testnet escrow reserve confirmed and Reserved event matched.',
+      verification,
+    }
+  } catch (error) {
+    if (reserve?.txHash || error.txHash || error.code === 'circle-cli-timeout') {
+      return reconciliationReservation({ payload, offerHash, verification, operation: 'reserve', reason: error.message, txHash: reserve?.txHash || error.txHash || null, circleTransactionId: reserve?.circleTransactionId || error.circleTransactionId || null, externalIdempotencyKey: reserveIdempotencyKey })
+    }
+    throw error
   }
 }
 

@@ -42,7 +42,7 @@
 
 ## Tests and CI
 
-- [x] Node unit tests — 25/25 passing locally
+- [x] Node unit tests — 32/32 passing locally
 - [x] Backend/source syntax lint
 - [x] Frontend ESLint
 - [x] TypeScript type-check

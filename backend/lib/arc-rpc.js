@@ -1,7 +1,7 @@
 const { encodeFunctionData, decodeFunctionResult, parseAbi, parseEventLogs, getAddress } = require('viem')
 const { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS } = require('../../packages/shared')
 
-const RPC_URL = 'https://rpc.testnet.arc.io'
+const RPC_URL = 'https://rpc.testnet.arc.network'
 const ERC20_ABI = parseAbi([
   'function allowance(address owner,address spender) view returns (uint256)',
 ])
