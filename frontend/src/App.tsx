@@ -7,7 +7,7 @@ import { ProofAndEscrow } from './components/ProofAndEscrow'
 import { SignalPanel } from './components/SignalPanel'
 import { StatusPill } from './components/StatusPill'
 import { Timeline } from './components/Timeline'
-import { getDemoConfig, runScout } from './lib/api'
+import { getDemoConfig, getReconciliations, runScout } from './lib/api'
 import { createLiveIdempotencyKey } from './lib/idempotency'
 import type { Authorization, DemoConfig, Offer, ScoutRunResult } from './lib/types'
 
@@ -66,6 +66,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [operatorToken, setOperatorToken] = useState('')
   const [pendingLiveIdempotencyKey, setPendingLiveIdempotencyKey] = useState<string | null>(null)
+  const [unresolvedReconciliation, setUnresolvedReconciliation] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -82,13 +83,30 @@ export default function App() {
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => {
+    if (mode !== 'live' || !operatorToken) {
+      setUnresolvedReconciliation(null)
+      return
+    }
+    let cancelled = false
+    getReconciliations(operatorToken)
+      .then((status) => {
+        if (!cancelled) setUnresolvedReconciliation(status.count > 0 ? status.unresolved[0]?.runId || 'unresolved-live-reconciliation' : null)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      })
+    return () => { cancelled = true }
+  }, [mode, operatorToken])
+
   const offers = demo?.offers || FALLBACK_OFFERS
   const selectedOffer = useMemo(() => offers.find((offer) => offer.id === selectedOfferId) || offers[0], [offers, selectedOfferId])
 
-  const reconciliationActive = mode === 'live' && (
+  const reconciliationActive = mode === 'live' && Boolean(
+    unresolvedReconciliation ||
     result?.executionStatus === 'reconciliation-required' ||
     result?.payment?.status === 'reconciliation_required' ||
-    result?.escrow?.status === 'reconciliation_required'
+    result?.escrow?.status === 'reconciliation_required',
   )
 
   async function execute() {
@@ -165,7 +183,7 @@ export default function App() {
                 {loading ? 'Agent running…' : reconciliationActive ? 'Manual reconciliation required' : mode === 'live' && !operatorToken ? 'Live requires operator token' : 'Run SlabScout Agent'}
               </button>
               <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；非证书类故障会进入 REPLAY_FALLBACK，但真实支付/锁仓会被禁止。</p>
-              {reconciliationActive ? <p className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs font-bold leading-5 text-amber-700">当前 Live run 需要人工核对 Circle/Arc 状态；保留关联 idempotencyKey，禁止在核对前开启新的 Live run。</p> : null}
+              {reconciliationActive ? <p className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs font-bold leading-5 text-amber-700">当前 Live run 需要人工核对 Circle/Arc 状态；{unresolvedReconciliation ? `未解决 run=${unresolvedReconciliation}。` : '保留关联 idempotencyKey。'}禁止在核对前开启新的 Live run。</p> : null}
             </div>
           </div>
         </header>

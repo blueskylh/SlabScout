@@ -1,7 +1,7 @@
 const routerModule = require('express').Router
-const { buildMarketProof, verifyMarketProof } = require('../../packages/market-proof')
+const { buildMarketProof, verifyMarketProof, assertLiveSigningSecret } = require('../../packages/market-proof')
 const { DEMO_OFFERS, ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS, ARC_TESTNET_NAME } = require('../../packages/shared')
-const { validateAuthorization, assertValid, unknownAuthorizationFields } = require('../../packages/shared/validation')
+const { validateAuthorization, validateOffer, unknownAuthorizationFields, nonZeroAddress } = require('../../packages/shared/validation')
 const { getCardSignal } = require('../../packages/renaiss-client')
 const { mergeAuthorization } = require('../lib/scout-agent')
 const { resolveEffectiveMode } = require('../lib/mode')
@@ -26,7 +26,30 @@ function assertIdentifier(value, field) {
   return value
 }
 
-function validateProofRequestBody(body = {}) {
+function assertResult(label, result) {
+  if (!result.ok) throw requestError(`${label}: ${result.errors.join('; ')}`)
+}
+
+function assertServerReady(authorization) {
+  try {
+    assertLiveSigningSecret('live')
+  } catch (error) {
+    throw requestError(error.message, 503)
+  }
+  if (!process.env.RENAISS_API_KEY || !process.env.RENAISS_API_SECRET) throw requestError('Renaiss credentials are required before paid MarketProof generation', 503)
+  if (!nonZeroAddress(process.env.MARKET_PROOF_SELLER_ADDRESS)) throw requestError('MARKET_PROOF_SELLER_ADDRESS must be a valid non-zero EVM address', 503)
+  const priceUsdc = Number(process.env.MARKET_PROOF_PRICE_USDC || 0.001)
+  if (!Number.isFinite(priceUsdc) || priceUsdc <= 0) throw requestError('MARKET_PROOF_PRICE_USDC must be a positive number')
+  if (priceUsdc > Number(authorization.maxIntelFeeUsdc)) throw requestError('MARKET_PROOF_PRICE_USDC exceeds authorization.maxIntelFeeUsdc')
+}
+
+function assertAuthorizationMatchesOffer(authorization, offer) {
+  for (const field of ['targetCard', 'targetItemId', 'targetHref', 'certNumber', 'company', 'gradeLabel']) {
+    if (authorization[field] !== offer[field]) throw requestError(`authorization ${field} does not match trusted offer`)
+  }
+}
+
+function validateProofRequestBody(body = {}, { offers = DEMO_OFFERS, now = new Date() } = {}) {
   if (!isPlainObject(body)) throw requestError('proof request body must be a JSON object')
   const extras = Object.keys(body).filter((key) => !BODY_FIELDS.includes(key))
   if (extras.length > 0) throw requestError(`unsupported proof request fields: ${extras.join(', ')}`)
@@ -36,20 +59,23 @@ function validateProofRequestBody(body = {}) {
   const offerId = assertIdentifier(body.offerId, 'offerId')
   const runId = assertIdentifier(body.runId, 'runId')
   const idempotencyKey = assertIdentifier(body.idempotencyKey, 'idempotencyKey')
-  const offer = DEMO_OFFERS.find((item) => item.id === offerId)
+  const offer = offers.find((item) => item.id === offerId)
   if (!offer) throw requestError('known offerId is required')
+  assertResult('offer', validateOffer(offer, now))
   if (!isPlainObject(body.authorization)) throw requestError('authorization must be a JSON object')
   const unknownAuth = unknownAuthorizationFields(body.authorization)
   if (unknownAuth.length > 0) throw requestError(`unsupported authorization fields: ${unknownAuth.join(', ')}`)
   const authorization = mergeAuthorization(body.authorization)
-  assertValid('authorization', validateAuthorization(authorization))
+  assertResult('authorization', validateAuthorization(authorization))
+  assertAuthorizationMatchesOffer(authorization, offer)
+  assertServerReady(authorization)
   return { mode, offer, authorization, runId, idempotencyKey }
 }
 
-function strictProofRequest(req, _res, next) {
+function strictProofRequest(req, _res, next, options = {}) {
   try {
     if (req.body?.signal || req.body?.valuation || req.body?.trades) throw requestError('client-submitted signal/valuation/trades are not accepted')
-    req.validatedProofRequest = validateProofRequestBody(req.body)
+    req.validatedProofRequest = validateProofRequestBody(req.body, options)
     req.effectiveMode = req.validatedProofRequest.mode
     next()
   } catch (error) {
@@ -142,7 +168,7 @@ async function buildSellerProofResponse({ request, body, payment }) {
   return { payment, proof: verification.proof, verification, authorization }
 }
 
-function createProofRouter({ gatewayMiddlewareFactory = createGatewayMiddleware } = {}) {
+function createProofRouter({ gatewayMiddlewareFactory = createGatewayMiddleware, offers = DEMO_OFFERS } = {}) {
   const router = routerModule()
   router.get('/quote', (_req, res) => {
     res.json({
@@ -158,7 +184,7 @@ function createProofRouter({ gatewayMiddlewareFactory = createGatewayMiddleware 
     })
   })
 
-  router.post('/prove', rateLimit({ windowMs: 60_000, max: 30 }), strictProofRequest, (req, res, next) => {
+  router.post('/prove', rateLimit({ windowMs: 60_000, max: 30 }), (req, res, next) => strictProofRequest(req, res, next, { offers }), (req, res, next) => {
     gatewayMiddlewareFactory()(req, res, next)
   }, async (req, res, next) => {
     try {
@@ -185,6 +211,6 @@ function createProofRouter({ gatewayMiddlewareFactory = createGatewayMiddleware 
 
 const defaultRouter = createProofRouter()
 defaultRouter.createProofRouter = createProofRouter
-defaultRouter._internals = { strictProofRequest, paidRequestToPayment, buildSellerProofResponse, createGatewayMiddleware, validateProofRequestBody }
+defaultRouter._internals = { strictProofRequest, paidRequestToPayment, buildSellerProofResponse, createGatewayMiddleware, validateProofRequestBody, assertAuthorizationMatchesOffer }
 
 module.exports = defaultRouter

@@ -272,6 +272,21 @@ async function getBudgetHold(runId) {
   return withState((state) => state.budgetHolds[runId] || null)
 }
 
+async function listUnresolvedReconciliations({ owner } = {}) {
+  return withState((state) => {
+    const holds = Object.values(state.budgetHolds)
+      .filter((hold) => hold.status === 'reconciliation-held' && (!owner || hold.owner === owner))
+      .map((hold) => {
+        const run = state.runs[hold.runId] || {}
+        return { runId: hold.runId, owner: hold.owner, amountUsdc: hold.amountUsdc, status: hold.status, createdAt: hold.createdAt, runStatus: run.status || null, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage: (run.stages || []).slice(-1)[0] || null }
+      })
+    const runs = Object.values(state.runs)
+      .filter((run) => run.status === 'reconciliation-required' && !holds.some((hold) => hold.runId === run.runId))
+      .map((run) => ({ runId: run.runId, owner: null, amountUsdc: 0, status: 'reconciliation-held', createdAt: run.startedAt || run.savedAt || null, runStatus: run.status, idempotencyKey: run.idempotencyKey || null, offerId: run.offerId || null, stage: (run.stages || []).slice(-1)[0] || null }))
+    return [...holds, ...runs]
+  })
+}
+
 function resetStateForTests() {
   memoryState = clone(DEFAULT_STATE)
   const file = stateFile()
@@ -298,6 +313,7 @@ module.exports = {
   recordAudit,
   listAudits,
   getBudgetHold,
+  listUnresolvedReconciliations,
   resetStateForTests,
   activeDailySpend,
 }

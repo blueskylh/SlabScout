@@ -149,6 +149,7 @@ Manual `live:e2e` is available for a deployed MVP; the GitHub workflow is readin
 - `docs/SUBMISSION_CHECKLIST.md`
 - `docs/OPENAPI_NOTES.md`
 - `docs/MANUAL_REVIEW_LOG.md`
+- `docs/DEPENDENCY_RISK.md`
 
 ## Security notes
 

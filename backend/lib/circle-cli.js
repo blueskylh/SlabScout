@@ -93,6 +93,15 @@ function extractCircleTransactionId(parsed) {
   return parsed?.data?.id || parsed?.data?.transactionId || parsed?.id || parsed?.transactionId || parsed?.circleTransactionId || null
 }
 
+function normalizeVersion(stdout = '') {
+  const match = String(stdout).match(/(\d+\.\d+\.\d+)/)
+  return match ? match[1] : null
+}
+
+function circleCliVersionSupported(version) {
+  return version === CIRCLE_CLI_VERIFIED_VERSION_RANGE
+}
+
 async function runCircle(args, { timeoutMs = 90_000 } = {}) {
   try {
     const { stdout, stderr } = await execFileAsync(circleBin(), args, {
@@ -129,6 +138,12 @@ async function runCircle(args, { timeoutMs = 90_000 } = {}) {
 
 function assertEvmAddress(value, field) {
   if (typeof value !== 'string' || !EVM_ADDRESS_RE.test(value) || /^0x0{40}$/i.test(value)) throw new Error(`${field} must be a valid non-zero EVM address`)
+}
+
+async function circleCliVersion() {
+  const result = await runCircle(['--version'], { timeoutMs: 15_000 })
+  const version = normalizeVersion(`${result.stdout}\n${result.stderr}`)
+  return { ...result, version, supported: circleCliVersionSupported(version) }
 }
 
 async function circleWalletStatus() {
@@ -172,6 +187,9 @@ module.exports = {
   normalizeServicesPayResult,
   extractTxHash,
   extractCircleTransactionId,
+  normalizeVersion,
+  circleCliVersionSupported,
+  circleCliVersion,
   circleWalletStatus,
   circleGatewayBalance,
   circleServicesPay,

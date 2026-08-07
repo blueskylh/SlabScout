@@ -163,6 +163,15 @@ async function runScout(body = {}) {
     error.statusCode = 409
     throw error
   }
+  if (mode === 'live') {
+    const unresolved = await stateStore.listUnresolvedReconciliations({ owner })
+    if (unresolved.length > 0) {
+      const error = new Error('Unresolved live reconciliation exists; reconcile Circle/Arc state before starting another live run')
+      error.statusCode = 409
+      error.unresolved = unresolved
+      throw error
+    }
+  }
 
   await stateStore.saveAuthorizationSnapshot({ runId: id, owner, authorization })
   const budgetImpact = mode === 'live'

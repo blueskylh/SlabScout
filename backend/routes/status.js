@@ -1,20 +1,36 @@
-const router = require('express').Router()
+const routerModule = require('express').Router
 const { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_USDC_ADDRESS } = require('../../packages/shared')
 const { missingLivePaymentEnv, missingLiveEscrowEnv } = require('../lib/circle-adapters')
 const { persistenceBackend, persistentStoreConfigured, stateFile, stateFileWritable } = require('../lib/state-store')
 const circleCli = require('../lib/circle-cli')
 const arcRpc = require('../lib/arc-rpc')
 const { tokenFromRequest, safeEqualString } = require('../lib/operator-auth')
+const { DEFAULT_SIGNING_SECRET, DEFAULT_POLICY_SIGNING_SECRET } = require('../../packages/market-proof')
+
+const MIN_GATEWAY_BALANCE_USDC = 0.001
 
 function commandConfigured() {
   return process.env.CIRCLE_CLI_BIN || 'circle'
 }
 
+function signingSecretConfigured() {
+  return Boolean(process.env.MARKET_PROOF_SIGNING_SECRET && process.env.MARKET_PROOF_SIGNING_SECRET !== DEFAULT_SIGNING_SECRET)
+}
+
+function policySigningSecretConfigured() {
+  return Boolean(process.env.POLICY_PROOF_SIGNING_SECRET && process.env.POLICY_PROOF_SIGNING_SECRET !== DEFAULT_POLICY_SIGNING_SECRET)
+}
+
 function liveConfigSummary() {
   const paymentMissing = missingLivePaymentEnv()
   const escrowMissing = missingLiveEscrowEnv()
-  const operatorMissing = !process.env.SLABSCOUT_OPERATOR_TOKEN ? ['SLABSCOUT_OPERATOR_TOKEN'] : []
-  const liveMissing = [...new Set([...paymentMissing, ...escrowMissing, ...operatorMissing])]
+  const required = []
+  if (!process.env.SLABSCOUT_OPERATOR_TOKEN) required.push('SLABSCOUT_OPERATOR_TOKEN')
+  if (!process.env.RENAISS_API_KEY) required.push('RENAISS_API_KEY')
+  if (!process.env.RENAISS_API_SECRET) required.push('RENAISS_API_SECRET')
+  if (!signingSecretConfigured()) required.push('MARKET_PROOF_SIGNING_SECRET(non-default)')
+  if (!policySigningSecretConfigured()) required.push('POLICY_PROOF_SIGNING_SECRET(non-default)')
+  const liveMissing = [...new Set([...paymentMissing, ...escrowMissing, ...required])]
   return { paymentMissing, escrowMissing, liveMissing, liveConfigComplete: liveMissing.length === 0 && process.env.CIRCLE_MODE === 'live' && process.env.ARC_EXECUTION_MODE === 'live' }
 }
 
@@ -40,10 +56,31 @@ function assertReadinessOperator(req) {
 async function checkReadOnly(label, fn) {
   try {
     const value = await fn()
+    if (value && typeof value === 'object' && value.ok === false) return { label, ok: false, value, error: value.error || value.reason || 'readiness check returned ok=false' }
     return { label, ok: true, value }
   } catch (error) {
     return { label, ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+}
+
+function parseGatewayBalanceUsdc(normalized) {
+  const data = normalized?.data || normalized?.envelope?.data || {}
+  const total = data.total ?? data.totalUsdc ?? data.balance ?? data.amount
+  const parsed = Number(total)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function walletSessionOk(status) {
+  const normalized = status?.normalized || {}
+  const data = normalized.data || normalized.envelope?.data || {}
+  return Boolean(normalized.ok === true && (
+    data.session === true ||
+    data.authenticated === true ||
+    data.loggedIn === true ||
+    data.walletAddress ||
+    data.address ||
+    data.wallet
+  ))
 }
 
 async function collectLiveReadiness({ circle = circleCli, arc = arcRpc } = {}) {
@@ -53,29 +90,34 @@ async function collectLiveReadiness({ circle = circleCli, arc = arcRpc } = {}) {
   const checks = []
   checks.push({ label: 'state-file-writable', ok: Boolean(stateFile() && stateFileWritable()), value: stateFile() || null })
   checks.push({ label: 'wallet-address-configured', ok: Boolean(walletAddress), value: walletAddress })
+  checks.push(await checkReadOnly('circle-cli-version', async () => {
+    const version = await circle.circleCliVersion()
+    return version.supported ? { ok: true, version: version.version } : { ok: false, version: version.version, error: `unsupported Circle CLI version ${version.version || 'unknown'}` }
+  }))
   checks.push(await checkReadOnly('circle-cli-status', async () => {
     const status = await circle.circleWalletStatus()
-    return { ok: status.ok === true, cliVersion: status.normalized?.cliVersion || null }
+    return walletSessionOk(status) ? { ok: true, session: true } : { ok: false, error: 'Circle CLI wallet session is not authenticated', normalized: status.normalized || null }
   }))
   checks.push(await checkReadOnly('circle-gateway-balance', async () => {
     if (!walletAddress) throw new Error('wallet address missing')
     const balance = await circle.circleGatewayBalance({ address: walletAddress, chain: 'ARC-TESTNET' })
-    return { ok: balance.ok === true, parsed: balance.parsed || null }
+    const totalUsdc = parseGatewayBalanceUsdc(balance.normalized)
+    return totalUsdc >= MIN_GATEWAY_BALANCE_USDC ? { ok: true, totalUsdc } : { ok: false, totalUsdc, error: `Gateway balance below ${MIN_GATEWAY_BALANCE_USDC} USDC` }
   }))
   checks.push(await checkReadOnly('arc-chain-id', async () => arc.assertArcChain({ rpcUrl })))
   checks.push(await checkReadOnly('escrow-bytecode', async () => {
     if (!escrow) throw new Error('RESERVATION_ESCROW_ADDRESS missing')
     const code = await arc.getCode({ address: escrow, rpcUrl })
-    if (!code || code === '0x') throw new Error('escrow bytecode missing')
-    return { address: escrow, bytecodeBytes: Math.max(0, (code.length - 2) / 2) }
+    if (!code || code === '0x') return { ok: false, error: 'escrow bytecode missing', address: escrow }
+    return { ok: true, address: escrow, bytecodeBytes: Math.max(0, (code.length - 2) / 2) }
   }))
   return { readinessLevel: 'read-only-live-check', ok: checks.every((check) => check.ok), checks, checkedAt: new Date().toISOString() }
 }
 
-router.get('/', (_req, res) => {
+function statusPayload() {
   const { liveMissing, liveConfigComplete } = liveConfigSummary()
   const statePath = stateFile()
-  res.json({
+  return {
     app: 'SlabScout',
     status: 'ok',
     mode: process.env.SLABSCOUT_DEFAULT_MODE || 'replay',
@@ -107,25 +149,31 @@ router.get('/', (_req, res) => {
     },
     readinessLevel: 'config-only',
     liveConfigComplete,
-    liveExecutionAvailable: liveConfigComplete,
     liveMissingEnv: liveMissing,
     renaissConfigured: Boolean(process.env.RENAISS_API_KEY && process.env.RENAISS_API_SECRET),
     checkedAt: new Date().toISOString(),
-  })
-})
-
-router.get('/live-readiness', async (req, res, next) => {
-  try {
-    assertReadinessOperator(req)
-    res.json(await collectLiveReadiness())
-  } catch (error) {
-    next(error)
   }
-})
+}
 
-router.use((error, _req, res, _next) => {
-  res.status(error.statusCode || 400).json({ error: 'Status check failed', message: error.message })
-})
+function createStatusRouter({ circle = circleCli, arc = arcRpc } = {}) {
+  const router = routerModule()
+  router.get('/', (_req, res) => res.json(statusPayload()))
+  router.get('/live-readiness', async (req, res, next) => {
+    try {
+      assertReadinessOperator(req)
+      res.json(await collectLiveReadiness({ circle, arc }))
+    } catch (error) {
+      next(error)
+    }
+  })
+  router.use((error, _req, res, _next) => {
+    res.status(error.statusCode || 400).json({ error: 'Status check failed', message: error.message })
+  })
+  return router
+}
 
-module.exports = router
-module.exports._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary }
+const defaultRouter = createStatusRouter()
+defaultRouter.createStatusRouter = createStatusRouter
+defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, statusPayload }
+
+module.exports = defaultRouter

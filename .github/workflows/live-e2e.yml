@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_spend:
-        description: "Type I_UNDERSTAND_SPEND_TESTNET_USDC to run the spending E2E; anything else runs readiness only."
+        description: "Type I_UNDERSTAND_SPEND_TESTNET_USDC to run the spending E2E; anything else runs remote readiness only."
         required: false
         default: "READINESS_ONLY"
 
@@ -17,65 +17,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install backend dependencies
-        run: npm --prefix backend ci --no-audit --no-fund
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci --no-audit --no-fund
-      - name: Verify required live secrets are configured
+      - name: Verify required remote inputs are configured
         env:
           SLABSCOUT_LIVE_BASE_URL: ${{ secrets.SLABSCOUT_LIVE_BASE_URL }}
           SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
-          SLABSCOUT_STATE_FILE: ${{ secrets.SLABSCOUT_STATE_FILE }}
-          MARKET_PROOF_SIGNING_SECRET: ${{ secrets.MARKET_PROOF_SIGNING_SECRET }}
-          POLICY_PROOF_SIGNING_SECRET: ${{ secrets.POLICY_PROOF_SIGNING_SECRET }}
-          RENAISS_API_KEY: ${{ secrets.RENAISS_API_KEY }}
-          RENAISS_API_SECRET: ${{ secrets.RENAISS_API_SECRET }}
-          MARKET_PROOF_SERVICE_URL: ${{ secrets.MARKET_PROOF_SERVICE_URL }}
-          MARKET_PROOF_SELLER_ADDRESS: ${{ secrets.MARKET_PROOF_SELLER_ADDRESS }}
-          CIRCLE_AGENT_WALLET_ADDRESS: ${{ secrets.CIRCLE_AGENT_WALLET_ADDRESS }}
-          RESERVATION_ESCROW_ADDRESS: ${{ secrets.RESERVATION_ESCROW_ADDRESS }}
         run: |
           test -n "$SLABSCOUT_LIVE_BASE_URL"
           test -n "$SLABSCOUT_OPERATOR_TOKEN"
-          test -n "$SLABSCOUT_STATE_FILE"
-          test -n "$MARKET_PROOF_SIGNING_SECRET"
-          test -n "$POLICY_PROOF_SIGNING_SECRET"
-          test -n "$RENAISS_API_KEY"
-          test -n "$RENAISS_API_SECRET"
-          test -n "$MARKET_PROOF_SERVICE_URL"
-          test -n "$MARKET_PROOF_SELLER_ADDRESS"
-          test -n "$CIRCLE_AGENT_WALLET_ADDRESS"
-          test -n "$RESERVATION_ESCROW_ADDRESS"
-      - name: Readiness smoke only
+      - name: Remote readiness check only
         if: ${{ github.event.inputs.confirm_spend != 'I_UNDERSTAND_SPEND_TESTNET_USDC' }}
         env:
-          BACKEND_PORT: '3001'
-          CIRCLE_MODE: live
-          ARC_EXECUTION_MODE: live
-          ARC_CHAIN_ID: '5042002'
-          ARC_USDC_ADDRESS: '0x3600000000000000000000000000000000000000'
+          SLABSCOUT_LIVE_BASE_URL: ${{ secrets.SLABSCOUT_LIVE_BASE_URL }}
           SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
-          MARKET_PROOF_SIGNING_SECRET: ${{ secrets.MARKET_PROOF_SIGNING_SECRET }}
-          POLICY_PROOF_SIGNING_SECRET: ${{ secrets.POLICY_PROOF_SIGNING_SECRET }}
-          SLABSCOUT_STATE_FILE: /tmp/slabscout-live-readiness-state.json
-          RENAISS_API_KEY: ${{ secrets.RENAISS_API_KEY }}
-          RENAISS_API_SECRET: ${{ secrets.RENAISS_API_SECRET }}
-          MARKET_PROOF_SERVICE_URL: ${{ secrets.MARKET_PROOF_SERVICE_URL }}
-          MARKET_PROOF_SELLER_ADDRESS: ${{ secrets.MARKET_PROOF_SELLER_ADDRESS }}
-          CIRCLE_AGENT_WALLET_ADDRESS: ${{ secrets.CIRCLE_AGENT_WALLET_ADDRESS }}
-          AGENT_WALLET_ADDRESS: ${{ secrets.CIRCLE_AGENT_WALLET_ADDRESS }}
-          RESERVATION_ESCROW_ADDRESS: ${{ secrets.RESERVATION_ESCROW_ADDRESS }}
-        run: npm run smoke:backend
+          SLABSCOUT_READINESS_ONLY: 'true'
+          SLABSCOUT_HTTP_TIMEOUT_MS: '30000'
+        run: npm run live:e2e
       - name: Spending live E2E against deployed MVP
         if: ${{ github.event.inputs.confirm_spend == 'I_UNDERSTAND_SPEND_TESTNET_USDC' }}
         env:
           SLABSCOUT_LIVE_BASE_URL: ${{ secrets.SLABSCOUT_LIVE_BASE_URL }}
           SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
-          SLABSCOUT_STATE_FILE: ${{ secrets.SLABSCOUT_STATE_FILE }}
-          RENAISS_API_KEY: ${{ secrets.RENAISS_API_KEY }}
-          RENAISS_API_SECRET: ${{ secrets.RENAISS_API_SECRET }}
-          MARKET_PROOF_SERVICE_URL: ${{ secrets.MARKET_PROOF_SERVICE_URL }}
-          MARKET_PROOF_SELLER_ADDRESS: ${{ secrets.MARKET_PROOF_SELLER_ADDRESS }}
-          CIRCLE_AGENT_WALLET_ADDRESS: ${{ secrets.CIRCLE_AGENT_WALLET_ADDRESS }}
-          RESERVATION_ESCROW_ADDRESS: ${{ secrets.RESERVATION_ESCROW_ADDRESS }}
+          SLABSCOUT_LIVE_IDEMPOTENCY_KEY: ${{ secrets.SLABSCOUT_LIVE_IDEMPOTENCY_KEY }}
+          SLABSCOUT_HTTP_TIMEOUT_MS: '120000'
         run: npm run live:e2e

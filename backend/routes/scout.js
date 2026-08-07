@@ -29,6 +29,35 @@ function redactAudit(row) {
   }
 }
 
+function assertOperatorToken(req) {
+  const token = tokenFromRequest(req)
+  if (!process.env.SLABSCOUT_OPERATOR_TOKEN) {
+    const error = new Error('SLABSCOUT_OPERATOR_TOKEN is required')
+    error.statusCode = 503
+    throw error
+  }
+  if (!token) {
+    const error = new Error('Operator token required')
+    error.statusCode = 401
+    throw error
+  }
+  if (!safeEqualString(token, process.env.SLABSCOUT_OPERATOR_TOKEN)) {
+    const error = new Error('Invalid operator token')
+    error.statusCode = 403
+    throw error
+  }
+}
+
+router.get('/reconciliations', async (req, res, next) => {
+  try {
+    assertOperatorToken(req)
+    const unresolved = await stateStore.listUnresolvedReconciliations({ owner: 'operator:live' })
+    res.json({ unresolved, count: unresolved.length })
+  } catch (error) {
+    next(error)
+  }
+})
+
 router.get('/audits', async (req, res, next) => {
   try {
     const token = tokenFromRequest(req)

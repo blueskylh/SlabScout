@@ -164,8 +164,45 @@ test('P0 unknown offerId and bad authorization fail before x402 gateway', async 
   assert.equal(gatewayCalls, 0)
 }))
 
+
+test('P0 x402 preflight rejects identity mismatch, expired offer, bad signing, missing Renaiss, and bad price before gateway', async () => {
+  const express = require('../backend/node_modules/express')
+  async function postWithEnv(body, env, offers = undefined) {
+    return withEnv(env, async () => {
+      let gatewayCalls = 0
+      const app = express()
+      app.use(express.json())
+      app.use('/api/market-proof', marketProofRoute.createProofRouter({ offers, gatewayMiddlewareFactory: () => (_req, _res, next) => { gatewayCalls += 1; next() } }))
+      const res = await request(app, { path: '/api/market-proof/prove', method: 'POST', body })
+      return { ...res, gatewayCalls }
+    })
+  }
+  const validEnv = { MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret', RENAISS_API_KEY: 'test-key', RENAISS_API_SECRET: 'test-secret', MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001', MARKET_PROOF_PRICE_USDC: '0.001' }
+  const mismatch = await postWithEnv(proofBody({ authorization: { ...DEFAULT_AUTHORIZATION, certNumber: '00000000' } }), validEnv)
+  assert.equal(mismatch.status, 400)
+  assert.equal(mismatch.gatewayCalls, 0)
+  const expiredOffer = { ...DEMO_OFFERS[0], expiresAt: '2020-01-01T00:00:00.000Z' }
+  const expired = await postWithEnv(proofBody(), validEnv, [expiredOffer])
+  assert.equal(expired.status, 400)
+  assert.equal(expired.gatewayCalls, 0)
+  const missingSecret = await postWithEnv(proofBody(), { ...validEnv, MARKET_PROOF_SIGNING_SECRET: undefined })
+  assert.equal(missingSecret.status, 503)
+  assert.equal(missingSecret.gatewayCalls, 0)
+  const missingRenaiss = await postWithEnv(proofBody(), { ...validEnv, RENAISS_API_KEY: undefined })
+  assert.equal(missingRenaiss.status, 503)
+  assert.equal(missingRenaiss.gatewayCalls, 0)
+  const invalidPrice = await postWithEnv(proofBody(), { ...validEnv, MARKET_PROOF_PRICE_USDC: '-1' })
+  assert.equal(invalidPrice.status, 400)
+  assert.equal(invalidPrice.gatewayCalls, 0)
+  const overCap = await postWithEnv(proofBody(), { ...validEnv, MARKET_PROOF_PRICE_USDC: '0.002' })
+  assert.equal(overCap.status, 400)
+  assert.equal(overCap.gatewayCalls, 0)
+})
+
 test('P0 legal x402 request keeps identical capped authorization before and after gateway', async () => withEnv({
   MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
+  RENAISS_API_KEY: 'rk_test',
+  RENAISS_API_SECRET: 'rsk_test',
   CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
   MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001',
 }, async () => {
@@ -197,6 +234,8 @@ test('P0 legal x402 request keeps identical capped authorization before and afte
 
 test('P0 seller endpoint requires mode live, strict authorization, and returns proof verified by the main agent auth', async () => withEnv({
   MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
+  RENAISS_API_KEY: 'rk_test',
+  RENAISS_API_SECRET: 'rsk_test',
   CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
   MARKET_PROOF_SELLER_ADDRESS: '0x7000000000000000000000000000000000000001',
 }, async () => {
@@ -232,8 +271,9 @@ test('P0 live readiness is operator-protected and read-only injectable', async (
   const status = require('../backend/routes/status')
   const readiness = await status._internals.collectLiveReadiness({
     circle: {
-      circleWalletStatus: async () => ({ ok: true, normalized: { cliVersion: '0.0.6' } }),
-      circleGatewayBalance: async () => ({ ok: true, parsed: { balances: [] } }),
+      circleCliVersion: async () => ({ version: '0.0.6', supported: true }),
+      circleWalletStatus: async () => ({ ok: true, normalized: { ok: true, data: { authenticated: true } } }),
+      circleGatewayBalance: async () => ({ ok: true, normalized: { ok: true, data: { total: 1 } } }),
     },
     arc: {
       RPC_URL,
@@ -244,6 +284,54 @@ test('P0 live readiness is operator-protected and read-only injectable', async (
   assert.equal(readiness.readinessLevel, 'read-only-live-check')
   assert.equal(readiness.ok, true)
   assert.ok(readiness.checks.some((check) => check.label === 'escrow-bytecode'))
+}))
+
+
+test('P0 live readiness HTTP requires operator token and returns 200 for read-only checks', async () => withEnv({
+  SLABSCOUT_OPERATOR_TOKEN: 'op',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-readiness-http.json`,
+  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
+}, async () => {
+  const express = require('../backend/node_modules/express')
+  const status = require('../backend/routes/status')
+  const app = express()
+  app.use('/api/status', status.createStatusRouter({
+    circle: {
+      circleCliVersion: async () => ({ version: '0.0.6', supported: true }),
+      circleWalletStatus: async () => ({ normalized: { ok: true, data: { authenticated: true } } }),
+      circleGatewayBalance: async () => ({ normalized: { ok: true, data: { total: 1 } } }),
+    },
+    arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
+  }))
+  assert.equal((await request(app, { path: '/api/status/live-readiness' })).status, 401)
+  assert.equal((await request(app, { path: '/api/status/live-readiness', headers: { 'x-slabscout-operator-token': 'bad' } })).status, 403)
+  const ok = await request(app, { path: '/api/status/live-readiness', headers: { 'x-slabscout-operator-token': 'op' } })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.body.ok, true)
+}))
+
+test('P0 live readiness is false for CLI ok=false, empty/zero balance, and wrong CLI version', async () => withEnv({
+  SLABSCOUT_OPERATOR_TOKEN: 'op',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-readiness-false.json`,
+  CIRCLE_AGENT_WALLET_ADDRESS: '0xA9E0000000000000000000000000000000000001',
+  RESERVATION_ESCROW_ADDRESS: '0xE500000000000000000000000000000000000001',
+}, async () => {
+  const status = require('../backend/routes/status')
+  async function readiness({ version = { version: '0.0.6', supported: true }, wallet = { normalized: { ok: true, data: { authenticated: true } } }, balance = { normalized: { ok: true, data: { total: 1 } } } }) {
+    return status._internals.collectLiveReadiness({
+      circle: {
+        circleCliVersion: async () => version,
+        circleWalletStatus: async () => wallet,
+        circleGatewayBalance: async () => balance,
+      },
+      arc: { RPC_URL, assertArcChain: async () => ARC_TESTNET_CHAIN_ID, getCode: async () => '0x60016001' },
+    })
+  }
+  assert.equal((await readiness({ wallet: { normalized: { ok: false, data: { authenticated: true } } } })).ok, false)
+  assert.equal((await readiness({ balance: { normalized: { ok: true, data: {} } } })).ok, false)
+  assert.equal((await readiness({ balance: { normalized: { ok: true, data: { total: 0 } } } })).ok, false)
+  assert.equal((await readiness({ version: { version: '0.0.5', supported: false } })).ok, false)
 }))
 
 test('P0 reserve receipt timeout returns reconciliation_required and preserves submitted tx metadata', async () => withEnv({
@@ -402,6 +490,48 @@ test('P0 runScout keeps budget reconciliation-held for non-timeout submitted met
     return error
   }, 'budget-submission-metadata')
 })
+
+
+test('P0 unresolved reconciliation blocks new live runs before external calls', async () => withEnv({
+  MARKET_PROOF_SIGNING_SECRET: 'live-market-proof-test-secret',
+  SLABSCOUT_OPERATOR_TOKEN: 'op',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-block-unresolved.json`,
+}, async () => {
+  const stateStore = require('../backend/lib/state-store')
+  await stateStore.claimIdempotency({ runId: 'run_unresolved_old', idempotencyKey: 'idem_unresolved_old', offerId: DEMO_OFFERS[0].id, mode: 'live' })
+  await stateStore.reserveBudget({ runId: 'run_unresolved_old', owner: 'operator:live', amountUsdc: 0.1, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.releaseBudget('run_unresolved_old', 'reconciliation-held')
+  const prevFetch = global.fetch
+  let called = false
+  global.fetch = async () => { called = true; throw new Error('should not call external') }
+  try {
+    const { runScout } = require('../backend/lib/scout-agent')
+    await assert.rejects(() => runScout({ mode: 'live', offerId: DEMO_OFFERS[0].id, idempotencyKey: 'idem_new_blocked', authorization: DEFAULT_AUTHORIZATION, operatorAuthorized: true }), /Unresolved live reconciliation/)
+    assert.equal(called, false)
+  } finally {
+    global.fetch = prevFetch
+  }
+}))
+
+test('P0 reconciliation list is operator protected and returns unresolved state', async () => withEnv({
+  SLABSCOUT_OPERATOR_TOKEN: 'op',
+  SLABSCOUT_STATE_FILE: `/tmp/slabscout-live-mvp-${process.pid}-recon-list.json`,
+}, async () => {
+  const express = require('../backend/node_modules/express')
+  const scout = require('../backend/routes/scout')
+  const stateStore = require('../backend/lib/state-store')
+  await stateStore.claimIdempotency({ runId: 'run_recon_list', idempotencyKey: 'idem_recon_list', offerId: DEMO_OFFERS[0].id, mode: 'live' })
+  await stateStore.reserveBudget({ runId: 'run_recon_list', owner: 'operator:live', amountUsdc: 0.1, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.releaseBudget('run_recon_list', 'reconciliation-held')
+  const app = express()
+  app.use('/api/scout', scout)
+  assert.equal((await request(app, { path: '/api/scout/reconciliations' })).status, 401)
+  assert.equal((await request(app, { path: '/api/scout/reconciliations', headers: { 'x-slabscout-operator-token': 'bad' } })).status, 403)
+  const ok = await request(app, { path: '/api/scout/reconciliations', headers: { 'x-slabscout-operator-token': 'op' } })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.body.count, 1)
+  assert.equal(ok.body.unresolved[0].runId, 'run_recon_list')
+}))
 
 test('P0 unauthorized audit fallback redacts full audit details', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct' }, async () => {
   const express = require('../backend/node_modules/express')

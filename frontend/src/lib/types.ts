@@ -189,6 +189,23 @@ export interface TimelineItem {
   receiptId?: string
 }
 
+export interface ReconciliationItem {
+  runId: string
+  owner?: string | null
+  amountUsdc?: number
+  status: string
+  createdAt?: string | null
+  runStatus?: string | null
+  idempotencyKey?: string | null
+  offerId?: string | null
+  stage?: Record<string, unknown> | null
+}
+
+export interface ReconciliationStatus {
+  unresolved: ReconciliationItem[]
+  count: number
+}
+
 export interface ScoutRunResult {
   runId: string
   idempotencyKey?: string
