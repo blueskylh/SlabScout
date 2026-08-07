@@ -1,0 +1,46 @@
+name: Live E2E (manual, spends Arc Testnet funds only)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  live-e2e:
+    runs-on: ubuntu-latest
+    environment: arc-testnet-live
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend dependencies
+        run: npm --prefix backend ci --no-audit --no-fund
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci --no-audit --no-fund
+      - name: Verify required live secrets are configured
+        env:
+          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
+          MARKET_PROOF_SIGNING_SECRET: ${{ secrets.MARKET_PROOF_SIGNING_SECRET }}
+          RENAISS_API_KEY: ${{ secrets.RENAISS_API_KEY }}
+          RENAISS_API_SECRET: ${{ secrets.RENAISS_API_SECRET }}
+        run: |
+          test -n "$CIRCLE_API_KEY"
+          test -n "$SLABSCOUT_OPERATOR_TOKEN"
+          test -n "$MARKET_PROOF_SIGNING_SECRET"
+          test -n "$RENAISS_API_KEY"
+          test -n "$RENAISS_API_SECRET"
+      - name: Live readiness smoke only
+        env:
+          BACKEND_PORT: 3001
+          CIRCLE_MODE: live
+          ARC_EXECUTION_MODE: live
+          ARC_CHAIN_ID: 5042002
+          ARC_USDC_ADDRESS: 0x3600000000000000000000000000000000000000
+          CIRCLE_API_KEY: ${{ secrets.CIRCLE_API_KEY }}
+          SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
+          MARKET_PROOF_SIGNING_SECRET: ${{ secrets.MARKET_PROOF_SIGNING_SECRET }}
+          POLICY_PROOF_SIGNING_SECRET: ${{ secrets.POLICY_PROOF_SIGNING_SECRET }}
+          SLABSCOUT_STATE_FILE: /tmp/slabscout-live-e2e-state.json
+          RENAISS_API_KEY: ${{ secrets.RENAISS_API_KEY }}
+          RENAISS_API_SECRET: ${{ secrets.RENAISS_API_SECRET }}
+        run: npm run smoke:backend
