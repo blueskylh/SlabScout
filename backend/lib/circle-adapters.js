@@ -365,7 +365,9 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
   }
 
   if (!nonZeroAddress(payload.seller) || !nonZeroAddress(payload.buyer) || !nonZeroAddress(payload.escrow)) throw new Error('Live escrow requires non-zero seller, buyer, and escrow EVM addresses')
-  const preflightResult = await preflight({ offer, authorization, owner: 'operator:live', arc: arcOps })
+  const refundAfter = BigInt(Math.floor(Date.now() / 1000) + Number(process.env.ESCROW_REFUND_AFTER_SECONDS || 7 * 24 * 60 * 60))
+  payload.refundAfter = refundAfter.toString()
+  const preflightResult = await preflight({ offer, authorization, proofHash: proof.proofHash, refundAfter: refundAfter.toString(), owner: 'operator:live', arc: arcOps })
   payload.preflight = { offerHash: preflightResult.offerHash, checks: preflightResult.checks }
   await arcOps.assertArcChain({ rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
   const existing = await arcOps.getReservation({ escrow: payload.escrow, offerHash, rpcUrl: process.env.ARC_RPC_URL || RPC_URL })
@@ -413,8 +415,6 @@ async function reserveEscrow({ runId, idempotencyKey, offer, proof, authorizatio
     }
   }
 
-  const refundAfter = BigInt(Math.floor(Date.now() / 1000) + Number(process.env.ESCROW_REFUND_AFTER_SECONDS || 7 * 24 * 60 * 60))
-  payload.refundAfter = refundAfter.toString()
   let reserve
   try {
     reserve = await walletExecute({

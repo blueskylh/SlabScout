@@ -20,6 +20,7 @@ const {
   normalizeServicesPayResult,
   normalizeWalletStatus,
   normalizeWalletList,
+  normalizeEstimate,
   circleWalletExecuteEstimate,
   findCircleExecuteTransaction,
   circleTestnetSessionOk,
@@ -146,8 +147,16 @@ function circleWalletListFixture({ wallets = [{ address: TEST_AGENT_WALLET, chai
   return { success: true, data: { wallets } }
 }
 
-function circleEstimateFixture({ canExecute = true } = {}) {
-  return { success: true, data: { estimate: { canExecute } } }
+function circleEstimateFixture() {
+  return {
+    data: {
+      blockchain: 'ARC-TESTNET',
+      medium: { gasLimit: '21000', baseFee: '0.01', priorityFee: '0.001', maxFee: '0.02', networkFee: '0.000021' },
+      callGasLimit: '30000',
+      verificationGasLimit: '100000',
+      preVerificationGas: '50000',
+    },
+  }
 }
 
 function normalizedCircleStatus(options = {}) {
@@ -197,6 +206,7 @@ function healthyPreflightArc(overrides = {}) {
     getEscrowMaxReservationAmount: async () => 1000000n,
     getReservation: async () => ({ status: 0 }),
     getTokenBalance: async () => 1000000n,
+    getAllowance: async () => 1000000n,
     getNativeBalance: async () => 0n,
     ...overrides,
   }
@@ -288,7 +298,7 @@ fs.appendFileSync(log, args.join(' ') + '\\n')
 const cursorIndex = args.indexOf('--cursor')
 const cursor = cursorIndex >= 0 ? args[cursorIndex + 1] : null
 if (args.includes('--estimate')) {
-  console.log(JSON.stringify({ success: true, data: { estimate: { canExecute: true } } }))
+  console.log(JSON.stringify(${JSON.stringify(circleEstimateFixture())}))
   process.exit(0)
 }
 if (args.join(' ').startsWith('transaction list')) {
@@ -302,7 +312,11 @@ console.log(JSON.stringify({ success: true, data: {} }))
   fs.chmodSync(circleBin, 0o700)
   await withEnv({ CIRCLE_CLI_BIN: circleBin }, async () => {
     const estimate = await circleWalletExecuteEstimate({ signature: 'approve(address,uint256)', params: [TEST_ESCROW, '1'], contract: ARC_TESTNET_USDC_ADDRESS, address: TEST_AGENT_WALLET })
-    assert.equal(estimate.normalized.canExecute, true)
+    assert.equal(estimate.normalized.ok, true)
+    assert.equal(estimate.normalized.estimated, true)
+    assert.equal(estimate.normalized.data.blockchain, 'ARC-TESTNET')
+    assert.equal(normalizeEstimate({ data: { estimate: { canExecute: true } } }).ok, false)
+    assert.equal(normalizeEstimate({ data: { blockchain: 'ARC-TESTNET', medium: {} } }).ok, false)
     const found = await findCircleExecuteTransaction({ address: TEST_AGENT_WALLET, transactionId: 'circle_tx_target' })
     assert.equal(found.found, true)
     assert.equal(found.txHash, `0x${'2'.repeat(64)}`)
@@ -543,6 +557,8 @@ test('P0 escrow preflight blocks wallet balance, wrong escrow USDC, low max amou
     await assert.rejects(() => assertLiveSpendPreflight({
       offer: DEMO_OFFERS[0],
       authorization: DEFAULT_AUTHORIZATION,
+      proofHash: `0x${'a'.repeat(64)}`,
+      refundAfter: String(Math.floor(Date.now() / 1000) + 3600),
       circle: healthyPreflightCircle(),
       arc: healthyPreflightArc(arcOverrides),
       state: { listUnresolvedReconciliations: async () => [], ...stateOverrides },
@@ -553,6 +569,32 @@ test('P0 escrow preflight blocks wallet balance, wrong escrow USDC, low max amou
   await blocked({ getEscrowMaxReservationAmount: async () => 99999n })
   await blocked({ getReservation: async () => ({ status: 1 }) })
   await blocked({}, { listUnresolvedReconciliations: async () => [{ runId: 'run_unresolved' }] })
+}))
+
+test('P0 escrow preflight estimates the exact reserve proofHash and refundAfter with Circle CLI 0.0.6 fee output', async () => withEnv(healthyLiveEnv('spend-preflight-exact'), async () => {
+  const proofHash = `0x${'b'.repeat(64)}`
+  const refundAfter = String(Math.floor(Date.now() / 1000) + 7200)
+  const calls = []
+  const result = await assertLiveSpendPreflight({
+    offer: DEMO_OFFERS[0],
+    authorization: DEFAULT_AUTHORIZATION,
+    proofHash,
+    refundAfter,
+    circle: {
+      ...healthyPreflightCircle(),
+      circleWalletExecuteEstimate: async (args) => {
+        calls.push(args)
+        return normalizedCircleEstimate()
+      },
+    },
+    arc: healthyPreflightArc(),
+    state: { listUnresolvedReconciliations: async () => [] },
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.estimateCalls, ['reserve'])
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].params.slice(-2), [proofHash, refundAfter])
+  assert.equal(calls[0].signature, 'reserve(bytes32,address,uint256,bytes32,uint64)')
 }))
 
 test('P0 direct POST /api/scout/run cannot bypass payment preflight before services pay', async () => {
@@ -929,6 +971,40 @@ test('P1 services-pay reconciliation does not query wallet execute transactions 
   assert.equal(context.budgetSummary.committedUsdc, 0.001)
 }))
 
+test('P0 approve reconciliation releases the unsubmitted reserve deposit and never marks the run chain-confirmed', async () => withEnv(healthyLiveEnv('resolve-approve'), async () => {
+  const stateStore = require('../backend/lib/state-store')
+  const runId = 'run_resolve_approve'
+  const idempotencyKey = 'idem_resolve_approve'
+  const offerHash = deterministicOfferHash(DEMO_OFFERS[0])
+  const txHash = `0x${'7'.repeat(64)}`
+  await stateStore.claimIdempotency({ runId, idempotencyKey, offerId: DEMO_OFFERS[0].id, mode: 'live' })
+  await stateStore.reserveBudgetLineItem({ runId, owner: 'operator:live', operation: 'services-pay', amountUsdc: 0.001, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.updateBudgetLineItem({ runId, operation: 'services-pay', status: 'spent' })
+  await stateStore.reserveBudgetLineItem({ runId, owner: 'operator:live', operation: 'reserve', amountUsdc: 0.1, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.updateBudgetLineItem({ runId, operation: 'reserve', status: 'released', meta: { operation: 'approve' } })
+  await stateStore.recordReservation({ runId, offerHash, txHash, status: 'reconciliation_required', escrow: TEST_ESCROW, usdc: ARC_TESTNET_USDC_ADDRESS, buyer: TEST_AGENT_WALLET, seller: TEST_SELLER, amountMinor: amountMinorUsdc(DEMO_OFFERS[0].depositUsdc).toString(), proofHash: `0x${'c'.repeat(64)}`, operation: 'approve' }, { owner: 'operator:live' })
+  await stateStore.markRunStage(runId, 'reconciliation-required', { operation: 'approve', offerHash, txHash })
+
+  const unresolved = await stateStore.listUnresolvedReconciliations({ owner: 'operator:live', operations: ['approve'] })
+  assert.equal(unresolved.length, 1)
+  assert.equal(unresolved[0].operation, 'approve')
+  assert.equal((await stateStore.budgetSummary({ runId })).committedUsdc, 0.001)
+
+  const result = await resolveReconciliation({
+    runId,
+    operation: 'approve',
+    arc: { RPC_URL, getTransactionReceipt: async () => ({ status: '0x1', transactionHash: txHash }) },
+    circle: {},
+  })
+  assert.equal(result.status, 'reconciled-approve-confirmed')
+  const context = await stateStore.getReconciliationContext(runId)
+  assert.equal(context.run.status, 'approve-confirmed')
+  assert.notEqual(context.run.status, 'chain-confirmed')
+  assert.equal(context.reservation.status, 'approve-confirmed')
+  assert.equal(context.budgetSummary.committedUsdc, 0.001)
+  assert.equal(context.unresolved, false)
+}))
+
 test('P1 operation budget ledger computes core reconciliation scenarios exactly', async () => withEnv(healthyLiveEnv('budget-ledger'), async () => {
   async function scenario(runId, paymentStatus, reserveStatus) {
     await reserveBudgetLineItem({ runId, owner: 'operator:live', operation: 'services-pay', amountUsdc: 0.001, dailyBudgetUsdc: 1, budgetImpact: true })
@@ -951,6 +1027,17 @@ test('P1 operation budget ledger computes core reconciliation scenarios exactly'
   assert.deepEqual(servicesPayNotSubmitted, { spentUsdc: 0, lockedDepositUsdc: 0, heldUsdc: 0, ambiguousUsdc: 0, releasedUsdc: 0.001, historicalDepositSpendUsdc: 0, currentLockedDepositUsdc: 0, committedUsdc: 0 })
   await reserveBudgetLineItem({ runId: 'budget_approve_confirmed', owner: 'operator:live', operation: 'approve', amountUsdc: 0, dailyBudgetUsdc: 1, budgetImpact: false })
   assert.equal((await budgetSummary({ runId: 'budget_approve_confirmed' })).committedUsdc, 0)
+}))
+
+test('P0 budget enforcement keeps legacy spend when new operation line items exist', async () => withEnv(healthyLiveEnv('budget-migration'), async () => {
+  const stateStore = require('../backend/lib/state-store')
+  await stateStore.recordPayment({ runId: 'legacy_payment_run', receiptId: 'legacy_receipt', amountUsdc: 0.5 }, { owner: 'operator:live', budgetImpact: true })
+  await stateStore.reserveBudgetLineItem({ runId: 'new_line_run', owner: 'operator:live', operation: 'services-pay', amountUsdc: 0.1, dailyBudgetUsdc: 1, budgetImpact: true })
+  await stateStore.updateBudgetLineItem({ runId: 'new_line_run', operation: 'services-pay', status: 'spent' })
+  await assert.rejects(
+    () => stateStore.reserveBudgetLineItem({ runId: 'would_overspend', owner: 'operator:live', operation: 'reserve', amountUsdc: 0.5, dailyBudgetUsdc: 1, budgetImpact: true }),
+    /Daily budget exceeded/
+  )
 }))
 
 test('P0 unauthorized audit fallback redacts full audit details', async () => withEnv({ SLABSCOUT_OPERATOR_TOKEN: 'correct' }, async () => {

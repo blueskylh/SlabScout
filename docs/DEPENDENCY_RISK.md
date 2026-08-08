@@ -13,13 +13,13 @@ npm --prefix backend audit --json
 metadata.vulnerabilities = { info: 0, low: 0, moderate: 6, high: 2, critical: 0, total: 8 }
 
 npm --prefix frontend audit --json
-metadata.vulnerabilities = { info: 0, low: 0, moderate: 0, high: 1, critical: 0, total: 1 }
+metadata.vulnerabilities = { info: 0, low: 0, moderate: 2, high: 1, critical: 0, total: 3 }
 
 npm --prefix frontend audit --omit=dev --json
 metadata.vulnerabilities = { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 }
 ```
 
-The remaining frontend finding is a dev/build-tool Vite advisory group. The single Vite audit node includes one high advisory and one moderate advisory in `via`, but npm's vulnerability metadata counts the package node as **1 high / 0 moderate**. Runtime production dependencies report **0** with `--omit=dev`.
+The remaining frontend findings are in the dev/build-tool dependency graph, including Vite advisories. npm's current vulnerability metadata reports **1 high / 2 moderate**. Runtime production dependencies report **0** with `--omit=dev`.
 
 ## Backend audit exception
 

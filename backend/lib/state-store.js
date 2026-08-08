@@ -94,17 +94,21 @@ function lineItemCountsForBudget(item) {
 
 function activeDailySpend(state, owner, now = new Date()) {
   const lineItems = Object.values(state.budgetLineItems || {}).filter((item) => item.owner === owner && lineItemCountsForBudget(item) && sameDay(item.createdAt || item.updatedAt, now))
-  if (lineItems.length > 0) return lineItems.reduce((sum, item) => sum + Number(item.amountUsdc || 0), 0)
+  const lineItemKeys = new Set(lineItems.map((item) => budgetLineKey(item.runId, item.operation)))
+  const lineItemRunIds = new Set(lineItems.map((item) => item.runId))
+  const lineItemSpend = lineItems.reduce((sum, item) => sum + Number(item.amountUsdc || 0), 0)
+  // Preserve spend from pre-line-item state files during rolling upgrades. Legacy
+  // records are included only when an operation-specific replacement is absent.
   const held = Object.values(state.budgetHolds)
-    .filter((hold) => hold.owner === owner && ['held', 'reconciliation-held'].includes(hold.status) && sameDay(hold.createdAt, now))
+    .filter((hold) => hold.owner === owner && !lineItemRunIds.has(hold.runId) && ['held', 'reconciliation-held'].includes(hold.status) && sameDay(hold.createdAt, now))
     .reduce((sum, hold) => sum + Number(hold.amountUsdc || 0), 0)
   const settledPayments = Object.values(state.payments)
-    .filter((payment) => payment.owner === owner && payment.budgetImpact === true && sameDay(payment.savedAt, now))
+    .filter((payment) => payment.owner === owner && !lineItemKeys.has(budgetLineKey(payment.runId, 'services-pay')) && payment.budgetImpact === true && sameDay(payment.savedAt, now))
     .reduce((sum, payment) => sum + Number(payment.amountUsdc || 0), 0)
   const settledReservations = Object.values(state.reservations)
-    .filter((reservation) => reservation.owner === owner && reservation.budgetImpact === true && sameDay(reservation.savedAt, now))
+    .filter((reservation) => reservation.owner === owner && !lineItemKeys.has(budgetLineKey(reservation.runId, 'reserve')) && reservation.budgetImpact === true && sameDay(reservation.savedAt, now))
     .reduce((sum, reservation) => sum + Number(reservation.amountUsdc || 0), 0)
-  return held + settledPayments + settledReservations
+  return lineItemSpend + held + settledPayments + settledReservations
 }
 
 function budgetLineKey(runId, operation) {

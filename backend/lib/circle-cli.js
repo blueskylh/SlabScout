@@ -105,9 +105,16 @@ function circleWalletListHasAddress(walletList, expectedAddress) {
 function normalizeEstimate(parsed) {
   const envelope = normalizeCircleEnvelope(parsed)
   const data = envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data) ? envelope.data : {}
-  const canExecute = data.canExecute === true || data.executable === true || data.estimate?.canExecute === true || data.simulation?.success === true || data.status === 'OK'
-  const insufficient = data.canExecute === false || data.executable === false || data.estimate?.canExecute === false || data.simulation?.success === false || data.error || data.reason
-  return { ...envelope, ok: Boolean(envelope.ok && !insufficient && (canExecute || Object.keys(data).length > 0)), data, canExecute, insufficient: Boolean(insufficient) }
+  // Circle CLI 0.0.6 returns the fee estimate itself, not a simulation result or
+  // a canExecute/paymaster flag: { data: { blockchain, medium, ...4337Fees } }.
+  // A zero exit code plus that documented shape is the only positive signal.
+  const hasMediumFee = data.medium && typeof data.medium === 'object' && !Array.isArray(data.medium) &&
+    ['gasLimit', 'baseFee', 'priorityFee', 'maxFee', 'networkFee']
+      .some((field) => data.medium[field] !== undefined && data.medium[field] !== null && data.medium[field] !== '')
+  const hasAccountAbstractionFee = ['callGasLimit', 'verificationGasLimit', 'preVerificationGas']
+    .some((field) => data[field] !== undefined && data[field] !== null && data[field] !== '')
+  const estimated = typeof data.blockchain === 'string' && Boolean(hasMediumFee || hasAccountAbstractionFee)
+  return { ...envelope, ok: Boolean(envelope.ok && estimated), data, estimated }
 }
 
 function normalizeServicesPayResult(result) {

@@ -56,21 +56,10 @@ async function assertCircleSessionAndWallet({ checks, circle, wallet }) {
   return { status, walletList }
 }
 
-async function assertEstimateOrNativeGas({ checks, circle, arc, wallet, rpcUrl, estimate }) {
-  if (estimate?.normalized?.canExecute === true) {
-    assertCheck(checks, 'wallet-execute-estimate', true, { canExecute: true }, null)
-    return { ok: true, source: 'circle-estimate' }
-  }
-  if (estimate?.normalized?.insufficient === true) {
-    assertCheck(checks, 'wallet-execute-estimate', false, estimate.normalized.data, 'Circle wallet execute --estimate reports the operation is not executable', { statusCode: 503 })
-  }
-  const nativeBalance = arc.getNativeBalance ? bigintValue(await arc.getNativeBalance({ address: wallet, rpcUrl })) : 0n
-  if (nativeBalance > 0n) {
-    assertCheck(checks, 'native-gas-fallback', true, { nativeBalanceWei: nativeBalance.toString(), reason: 'estimate did not expose a deterministic canExecute flag' }, null)
-    return { ok: true, source: 'native-balance' }
-  }
-  assertCheck(checks, 'native-gas-fallback', false, { nativeBalanceWei: nativeBalance.toString(), estimate: estimate?.normalized?.data || null }, 'Circle estimate was not decisive and native gas balance is zero', { statusCode: 503 })
-  return { ok: false }
+async function assertCircleEstimate({ checks, estimate, operation }) {
+  const ok = estimate?.normalized?.ok === true && estimate.normalized.estimated === true
+  assertCheck(checks, `wallet-execute-estimate-${operation}`, ok, estimate?.normalized?.data || null, `Circle wallet execute --estimate did not return a valid 0.0.6 fee estimate for ${operation}`, { statusCode: 503 })
+  return { ok: true, source: 'circle-wallet-execute-estimate', operation }
 }
 
 async function assertPaymentPreflight({ authorization, owner = 'operator:live', circle = circleCli, state = stateStore } = {}) {
@@ -86,7 +75,7 @@ async function assertPaymentPreflight({ authorization, owner = 'operator:live', 
   return { ok: true, amountUsdc, wallet, checks }
 }
 
-async function assertEscrowExecutionPreflight({ offer, owner = 'operator:live', circle = circleCli, arc = arcRpc, state = stateStore } = {}) {
+async function assertEscrowExecutionPreflight({ offer, proofHash, refundAfter, owner = 'operator:live', circle = circleCli, arc = arcRpc, state = stateStore } = {}) {
   const checks = []
   assertCheck(checks, 'arc-execution-mode-live', process.env.ARC_EXECUTION_MODE === 'live', process.env.ARC_EXECUTION_MODE || 'mock', 'ARC_EXECUTION_MODE=live is required before live escrow execution', { statusCode: 503 })
   const wallet = process.env.AGENT_WALLET_ADDRESS || process.env.CIRCLE_AGENT_WALLET_ADDRESS || null
@@ -100,6 +89,8 @@ async function assertEscrowExecutionPreflight({ offer, owner = 'operator:live', 
   assertCheck(checks, 'circle-wallet-configured', nonZeroAddress(circleWallet), circleWallet, 'CIRCLE_AGENT_WALLET_ADDRESS must be a non-zero EVM address', { statusCode: 503 })
   assertCheck(checks, 'escrow-configured', nonZeroAddress(escrow), escrow, 'RESERVATION_ESCROW_ADDRESS must be a non-zero EVM address', { statusCode: 503 })
   assertCheck(checks, 'usdc-configured', sameAddress(usdc, ARC_TESTNET_USDC_ADDRESS), usdc, `ARC_USDC_ADDRESS must be ${ARC_TESTNET_USDC_ADDRESS}`, { statusCode: 503 })
+  assertCheck(checks, 'proof-hash', /^0x[a-fA-F0-9]{64}$/.test(String(proofHash || '')), proofHash || null, 'A valid proofHash is required before estimating reserve', { statusCode: 400 })
+  assertCheck(checks, 'refund-after', /^\d+$/.test(String(refundAfter || '')) && BigInt(refundAfter) > BigInt(Math.floor(Date.now() / 1000)), refundAfter || null, 'refundAfter must be a future uint64 timestamp before estimating reserve', { statusCode: 400 })
 
   const unresolved = await state.listUnresolvedReconciliations({ owner, operations: ['approve', 'reserve'] })
   assertCheck(checks, 'unresolved-escrow-reconciliation', unresolved.length === 0, unresolved.length, 'Unresolved approve/reserve reconciliation exists; resolve it before live escrow execution', { unresolved })
@@ -125,11 +116,11 @@ async function assertEscrowExecutionPreflight({ offer, owner = 'operator:live', 
   if (allowance < amountMinor) {
     const approveEstimate = await circle.circleWalletExecuteEstimate({ signature: 'approve(address,uint256)', params: [escrow, amountMinor.toString()], contract: ARC_TESTNET_USDC_ADDRESS, address: wallet, chain: 'ARC-TESTNET', rpcUrl })
     estimateCalls.push('approve')
-    await assertEstimateOrNativeGas({ checks, circle, arc, wallet, rpcUrl, estimate: approveEstimate })
+    await assertCircleEstimate({ checks, estimate: approveEstimate, operation: 'approve' })
   }
-  const reserveEstimate = await circle.circleWalletExecuteEstimate({ signature: 'reserve(bytes32,address,uint256,bytes32,uint64)', params: [offerHash, offer.sellerAddress, amountMinor.toString(), `0x${'1'.repeat(64)}`, String(Math.floor(Date.now() / 1000) + 3600)], contract: escrow, address: wallet, chain: 'ARC-TESTNET', rpcUrl })
+  const reserveEstimate = await circle.circleWalletExecuteEstimate({ signature: 'reserve(bytes32,address,uint256,bytes32,uint64)', params: [offerHash, offer.sellerAddress, amountMinor.toString(), proofHash, String(refundAfter)], contract: escrow, address: wallet, chain: 'ARC-TESTNET', rpcUrl })
   estimateCalls.push('reserve')
-  await assertEstimateOrNativeGas({ checks, circle, arc, wallet, rpcUrl, estimate: reserveEstimate })
+  await assertCircleEstimate({ checks, estimate: reserveEstimate, operation: 'reserve' })
 
   return { ok: true, offerHash, amountMinor: amountMinor.toString(), wallet, escrow, allowance: allowance.toString(), estimateCalls, checks }
 }

@@ -266,8 +266,10 @@ async function runScout(body = {}) {
       await stateStore.markRunStage(id, 'escrow-submitting')
       escrow = await reserveEscrow({ runId: id, idempotencyKey, offer, proof, authorization, dataMode: signal.dataMode, payment, decision: finalDecision })
       await stateStore.recordReservation(escrow, { owner, budgetImpact: mode === 'live' && escrow.chainConfirmed === true })
-      await stateStore.updateBudgetLineItem({ runId: id, operation: 'reserve', status: escrow.chainConfirmed ? 'spent' : escrow.status === 'reconciliation_required' ? 'ambiguous' : 'released', externalId: escrow.circleTransactionId || escrow.txHash || null, meta: { escrowStatus: escrow.status, operation: escrow.operation || 'reserve' } })
-      await stateStore.markRunStage(id, escrow.chainConfirmed ? 'chain-confirmed' : escrow.status === 'reconciliation_required' ? 'reconciliation-required' : 'failed')
+      const escrowOperation = escrow.operation || 'reserve'
+      const reserveBudgetStatus = escrow.chainConfirmed ? 'spent' : escrow.status === 'reconciliation_required' && escrowOperation === 'reserve' ? 'ambiguous' : 'released'
+      await stateStore.updateBudgetLineItem({ runId: id, operation: 'reserve', status: reserveBudgetStatus, externalId: escrowOperation === 'reserve' ? (escrow.circleTransactionId || escrow.txHash || null) : null, meta: { escrowStatus: escrow.status, operation: escrowOperation } })
+      await stateStore.markRunStage(id, escrow.chainConfirmed ? 'chain-confirmed' : escrow.status === 'reconciliation_required' ? 'reconciliation-required' : 'failed', { operation: escrowOperation, offerHash: escrow.offerHash || null, txHash: escrow.txHash || null, circleTransactionId: escrow.circleTransactionId || null, externalIdempotencyKey: escrow.externalIdempotencyKey || null })
       pushTimeline(timeline, 'Arc 订金合约', escrow.chainConfirmed ? 'done' : 'warn', escrow.chainConfirmed ? `Arc escrow 已链上确认 ${offer.depositUsdc} USDC 订金。` : escrow.note, { txHash: escrow.txHash })
     } else if (finalDecision.action === 'REJECT') {
       await stateStore.markRunStage(id, 'failed')

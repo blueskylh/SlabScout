@@ -80,7 +80,7 @@ function walletControlsAddress(walletList, walletAddress) {
   return circleCli.circleWalletListHasAddress(walletList, walletAddress)
 }
 
-async function estimateOrNativeReadiness({ circle, arc, walletAddress, escrow, rpcUrl }) {
+async function estimateReadiness({ circle, walletAddress, escrow, rpcUrl }) {
   if (!walletAddress || !escrow) return { ok: false, error: 'wallet address or escrow missing before estimate' }
   const estimate = await circle.circleWalletExecuteEstimate({
     signature: 'approve(address,uint256)',
@@ -90,12 +90,9 @@ async function estimateOrNativeReadiness({ circle, arc, walletAddress, escrow, r
     chain: 'ARC-TESTNET',
     rpcUrl,
   })
-  if (estimate.normalized?.canExecute === true) return { ok: true, source: 'circle-wallet-execute-estimate', estimate: estimate.normalized.data }
-  if (estimate.normalized?.insufficient === true) return { ok: false, source: 'circle-wallet-execute-estimate', estimate: estimate.normalized.data, error: 'Circle wallet execute --estimate reports the operation is not executable' }
-  const nativeBalanceWei = arc.getNativeBalance ? (await arc.getNativeBalance({ address: walletAddress, rpcUrl })).toString() : '0'
-  return BigInt(nativeBalanceWei) > 0n
-    ? { ok: true, source: 'native-balance-fallback', nativeBalanceWei, reason: 'estimate did not expose a deterministic canExecute flag' }
-    : { ok: false, source: 'native-balance-fallback', nativeBalanceWei, estimate: estimate.normalized?.data || null, error: 'Circle estimate was not decisive and native gas balance is zero' }
+  return estimate.normalized?.ok === true && estimate.normalized?.estimated === true
+    ? { ok: true, source: 'circle-wallet-execute-estimate', estimate: estimate.normalized.data }
+    : { ok: false, source: 'circle-wallet-execute-estimate', estimate: estimate.normalized?.data || null, error: 'Circle wallet execute --estimate did not return a valid 0.0.6 fee estimate' }
 }
 
 async function collectLiveReadiness({ circle = circleCli, arc = arcRpc, state = { listUnresolvedReconciliations } } = {}) {
@@ -134,7 +131,7 @@ async function collectLiveReadiness({ circle = circleCli, arc = arcRpc, state = 
     if (!code || code === '0x') return { ok: false, error: 'escrow bytecode missing', address: escrow }
     return { ok: true, address: escrow, bytecodeBytes: Math.max(0, (code.length - 2) / 2) }
   }))
-  checks.push(await checkReadOnly('wallet-execute-estimate', async () => estimateOrNativeReadiness({ circle, arc, walletAddress, escrow, rpcUrl })))
+  checks.push(await checkReadOnly('wallet-execute-estimate', async () => estimateReadiness({ circle, walletAddress, escrow, rpcUrl })))
   checks.push(await checkReadOnly('unresolved-reconciliation', async () => {
     const unresolved = await state.listUnresolvedReconciliations({ owner: 'operator:live' })
     return unresolved.length === 0 ? { ok: true, count: 0 } : { ok: false, count: unresolved.length, unresolved, error: 'Unresolved reconciliation blocks live execution' }
@@ -202,6 +199,6 @@ function createStatusRouter({ circle = circleCli, arc = arcRpc } = {}) {
 
 const defaultRouter = createStatusRouter()
 defaultRouter.createStatusRouter = createStatusRouter
-defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, walletControlsAddress, estimateOrNativeReadiness, statusPayload }
+defaultRouter._internals = { collectLiveReadiness, assertReadinessOperator, liveConfigSummary, checkReadOnly, parseGatewayBalanceUsdc, walletSessionOk, walletControlsAddress, estimateReadiness, statusPayload }
 
 module.exports = defaultRouter
