@@ -204,11 +204,14 @@ function normalizeSignal({ detail = {}, fmv = {}, trades = {}, certLookup = {}, 
   const identityConfidence = offer?.forceLowConfidence
     ? 'medium'
     : (offer?.imageConfidence || (matchesIdentity ? 'high' : 'low'))
+  const fmvPointTimes = Array.isArray(fmv.series)
+    ? fmv.series.flatMap((line) => Array.isArray(line.points) ? line.points.map((point) => point.t) : [])
+    : (Array.isArray(fmv.points) ? fmv.points.map((point) => point.t) : [])
   const sourceUpdatedAt = maxIso(
     detail.updatedAt,
-    cert.observedAt,
+    detail.lastSaleAt,
     allTrades.map((trade) => trade.observedAt),
-    Array.isArray(fmv.points) ? fmv.points.map((point) => point.t) : [],
+    fmvPointTimes,
   )
   const tradeSampleMode = completedTrades.length > 0 ? 'transaction' : 'aggregate-only'
 

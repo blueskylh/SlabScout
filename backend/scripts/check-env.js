@@ -6,7 +6,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { execSync } = require('node:child_process')
-const { validateRuntimeConfig } = require('../../packages/shared/validation')
+const { validateRuntimeConfig } = require('../packages/shared/validation')
 
 const envPath = path.join(process.cwd(), '.env')
 if (fs.existsSync(envPath)) {

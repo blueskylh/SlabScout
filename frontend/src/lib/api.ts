@@ -1,4 +1,5 @@
-import type { Authorization, DemoConfig, ScoutRunResult } from './types'
+import { liveRunBody } from './idempotency'
+import type { Authorization, DemoConfig, ReconciliationStatus, ScoutRunResult } from './types'
 
 function apiUrl(path: string) {
   const clean = path.replace(/^\/+/, '')
@@ -32,9 +33,18 @@ export function getDemoConfig() {
   return request<DemoConfig>('demo')
 }
 
-export function runScout(input: { mode: string; offerId: string; authorization: Authorization }) {
+export function getReconciliations(operatorToken: string) {
+  return request<ReconciliationStatus>('scout/reconciliations', {
+    headers: { 'x-slabscout-operator-token': operatorToken },
+  })
+}
+
+export function runScout(input: { mode: string; offerId: string; authorization: Authorization; idempotencyKey?: string; operatorToken?: string }) {
+  const { operatorToken, ...bodyInput } = input
+  const body = liveRunBody(bodyInput)
   return request<ScoutRunResult>('scout/run', {
     method: 'POST',
-    body: JSON.stringify(input),
+    headers: operatorToken ? { 'x-slabscout-operator-token': operatorToken } : undefined,
+    body: JSON.stringify(body),
   })
 }

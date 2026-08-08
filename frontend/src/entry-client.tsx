@@ -60,8 +60,8 @@ async function boot() {
 
     // Use hydrateRoot only when SSR rendered real app content. The scaffold's
     // server entry intentionally returns a lightweight placeholder shell so
-    // SSR-incompatible libraries (for example echarts-for-react) cannot crash
-    // deploy-time render. Placeholder markup must be client-rendered, not hydrated.
+    // browser-only UI code cannot crash deploy-time render. Placeholder markup
+    // must be client-rendered, not hydrated.
     const hasPlaceholder = !!root.querySelector('[data-surf-placeholder]')
     if (root.childNodes.length > 0 && root.innerHTML !== '<!--ssr-outlet-->' && !hasPlaceholder) {
       hydrateRoot(root, children)

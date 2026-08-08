@@ -23,8 +23,15 @@ frontend/.env.*
 
 # Runtime state
 audit-log.jsonl
+.data/
+slabscout-state.json
+slabscout-state.json.*
 *.log
 .DS_Store
+
+# Sandbox / build-host internals and deploy artifacts
+.vulcan/
+outputs/
 
 # Keys must never be committed
 *.pem

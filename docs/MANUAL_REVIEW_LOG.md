@@ -54,3 +54,51 @@ This pass was limited to the requested correctness fixes and intentionally did n
 4. **Policy/budget pass** — re-read hard gates and budget math; `requireMarketProof=false` no longer budgets the 0.001 USDC intel fee, and `finalizeWithProof` only accepts verified proofs.
 5. **State-machine pass** — re-read orchestration and adapters so replay takes priority over live Circle/Arc env, `REPLAY_FALLBACK` blocks real payment, unknown offers do not fall back to Seller A, and replay execution status is not displayed as real success.
 6. **Config/docs/CI pass** — re-read runtime validation, env examples, README copy, Circle CLI syntax, and added GitHub Actions coverage for test/lint/type-check/build.
+
+## Final MVP hardening pass
+
+This pass implemented all safety work that does not require external Circle credentials, funded Arc Testnet wallet, live x402 service, deployed escrow address, or production database.
+
+1. **Proof trust-boundary pass** — re-read MarketProof, PolicyProof, policy finalize, and escrow adapter code. `verified`/`verification.ok` are now display-only fields; execution boundaries recompute canonical hashes, HMAC signatures, mode, offer/cert/payment/TTL bindings.
+2. **Payment trust-boundary pass** — replay payments now use `simulated/replayAccepted` with `confirmed=false`; the verifier rejects `status=paid` without provider confirmation and full receipt binding.
+3. **Public API pass** — `/api/scout/run` rejects arbitrary `body.offer`, uses trusted offer IDs only, adds live operator-token protection, and rate-limits requests.
+4. **Renaiss data pass** — source freshness no longer uses cert lookup time as market data freshness; fallback remains explicitly blocked from payment and escrow.
+5. **State/idempotency pass** — added server-side state store for idempotency, budget holds, payment/proof/reservation records, and fail-closed live persistence checks.
+6. **Frontend truthfulness pass** — split MarketProof and PolicyProof display, fixed Seller B color logic, removed default INVESTIGATE before run, and kept replay/confirmed states distinct.
+7. **Contract pass** — converted the Solidity fixture into a Foundry project with SafeERC20-style transfer checks, deployment script, and coverage for reserve/release/refund failure modes.
+8. **CI/docs pass** — added backend smoke, secret scan, Foundry CI steps, manual live workflow, and the architecture/threat/deployment/demo/deck/submission docs.
+
+Known boundary: real Circle Agent Wallet/x402 and real Arc reserve remain fail-closed until external credentials, Testnet USDC, a deployed escrow address, and persistent production state are provided.
+
+## P0-1 live MVP continuation pass
+
+This pass continued from baseline `ccc4d519fc9c7d9f6fbb07bd00a9da7a303af03b` and focused on live-mode boundaries that can be implemented without spending funds in CI.
+
+1. **Mode/auth pass** — added a single effective-mode resolver, rejected `live-cache`/invalid public modes, and required operator auth even when live comes from the server default rather than the request body.
+2. **State/idempotency pass** — expanded the state store with payment intents and single-instance file persistence, removed `DATABASE_URL` as a pretend persistence backend, required live idempotency keys, and added offer-level live payment intent locking.
+3. **x402 seller pass** — refactored `/api/market-proof/prove` into a live seller endpoint protected by Circle Gateway x402 middleware; the endpoint rejects client market data and refetches Renaiss server-side before signing.
+4. **Circle CLI buyer pass** — added a bounded `execFile` Circle CLI wrapper for `services pay`, Gateway balance/status helpers, and wallet contract execution, with sanitized output and reconciliation-required handling for unknown results.
+5. **Arc RPC pass** — added Arc chain ID checks, USDC allowance reads, reservation reads, tx receipt polling, and `Reserved` event validation before marking escrow chain-confirmed.
+6. **Regression pass** — added HTTP and verifier tests for mode bypass, live operator token handling, idempotency requirements, bad cert flags, targetCard mismatch, bad live payer/payee/provider status, and concurrent live payment intent locking.
+
+## P0 live safety continuation pass
+
+This pass continued on `final/agentic-economy-mvp` without merging `main` and without executing any real payment or reserve transaction.
+
+1. **Frontend idempotency pass** — Live UI now generates a live idempotency key before calling `/api/scout/run`; retry after network failure reuses the pending key, while successful runs and explicit offer/auth/mode changes clear it.
+2. **Circle CLI parsing pass** — CLI stdout is parsed before any sanitization; sanitization is limited to error/log boundaries and no longer redacts ordinary txHash/proofHash/blockHash values. The adapter records Circle CLI `0.0.6` as the verified JSON envelope target and normalizes `data.txHash`, `data.response`, and quiet seller responses.
+3. **Seller authorization pass** — the x402 seller endpoint requires `mode: "live"`, rejects unknown authorization fields, applies server caps, forces `spentTodayUsdc=0`, and returns the exact authorization snapshot used to sign the proof.
+4. **Arc RPC/reconciliation pass** — the default RPC moved to `https://rpc.testnet.arc.network`; approve/reserve calls carry stable external idempotency keys; submitted tx receipt timeouts return `reconciliation_required` with tx metadata instead of ordinary failure.
+5. **Audit privacy pass** — unauthorized audit fallback now redacts memory-log fallback rows instead of returning full checks or payment receipt details.
+6. **Regression pass** — added tests for frontend live idempotency, Circle CLI hash/sanitization behavior, seller proof flow, Arc RPC default, receipt timeout reconciliation, and unauthorized audit redaction.
+
+## P0 x402 preflight and readiness continuation pass
+
+This pass continued from remote commit `30895211ab32c64065a0ff6ebf8e754eb41add3f` on `final/agentic-economy-mvp` without merging `main` and without executing live Circle/x402 payment or Arc approve/reserve.
+
+1. **x402 preflight pass** — all deterministic seller endpoint checks now run before Gateway middleware: exact `mode: live`, known offer, plain authorization object, unknown body/auth rejection, full merged authorization validation, bounded run/idempotency keys, and a server-capped authorization snapshot stored on the request.
+2. **Snapshot binding pass** — the paid seller handler now uses `req.validatedProofRequest` after x402 settlement instead of re-merging raw body data, so the signed proof and main Agent verifier use the same authorization snapshot.
+3. **Reconciliation classifier pass** — extracted a single submitted-operation classifier for txHash, Circle transaction ID, CLI timeout, and explicit submission metadata; approve/reserve and run-level catch paths use it consistently.
+4. **Services-pay idempotency pass** — removed the unsupported native `--idempotency-key` argument from Circle CLI `services pay`; SlabScout still sends idempotency in the request body and relies on paymentIntent state for application-level exactly-once behavior. Wallet execute still uses native external idempotency keys.
+5. **Readiness pass** — `/api/status` now advertises config-only readiness, and `/api/status/live-readiness` performs operator-protected read-only checks for Circle CLI/session, wallet, Gateway balance, Arc chain/RPC, escrow bytecode, and state-file writability.
+6. **Reconciliation UX pass** — frontend Live reconciliation keeps the existing idempotency key, disables the run button, and shows a manual Circle/Arc reconciliation warning.

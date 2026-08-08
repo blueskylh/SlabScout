@@ -12,7 +12,7 @@ function money(value?: number | null) {
 }
 
 function paymentTone(payment: PaymentReceipt | null) {
-  if (payment?.status === 'live-payment-confirmed') return 'pass'
+  if (payment?.confirmed === true && ['confirmed', 'settled'].includes(payment.providerStatus || '')) return 'pass'
   return payment ? 'warn' : 'warn'
 }
 
@@ -38,13 +38,13 @@ export function ProofAndEscrow({ payment, proof, escrow }: { payment: PaymentRec
 
       <article className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-black text-fg-base">MarketProof</h2>
-          <StatusPill tone={proof?.verified ? 'pass' : 'warn'}>{proof?.verified ? 'verified' : proof ? 'hashed' : 'none'}</StatusPill>
+          <h2 className="text-lg font-black text-fg-base">{proof?.proofKind === 'PolicyProof' ? 'PolicyProof' : 'MarketProof'}</h2>
+          <StatusPill tone={proof?.verified ? 'pass' : 'warn'}>{proof ? `${proof.proofKind || 'MarketProof'} ${proof.verified ? 'verified' : 'hashed'}` : 'none'}</StatusPill>
         </div>
         <dl className="mt-4 space-y-3 text-sm">
           <Row label="Proof hash" value={shortHash(proof?.proofHash)} mono />
-          <Row label="Suggested max" value={money(proof?.suggestedMaxUsd)} />
-          <Row label="Excluded listings" value={proof ? String(proof.listingRowsExcluded) : '—'} />
+          <Row label="Suggested max" value={proof?.proofKind === 'PolicyProof' ? 'n/a' : money(proof?.suggestedMaxUsd)} />
+          <Row label="Excluded listings" value={proof?.proofKind === 'MarketProof' ? String(proof.listingRowsExcluded) : '—'} />
         </dl>
       </article>
 

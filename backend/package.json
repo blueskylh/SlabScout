@@ -3,11 +3,15 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/check-env.js node --watch server.js",
-    "start": "node scripts/check-env.js node server.js",
+    "start": "node server.js",
     "check": "node scripts/manual-checklist.js"
   },
   "dependencies": {
+    "@circle-fin/x402-batching": "^3.3.0",
     "@surf-ai/sdk": "1.0.5",
-    "express": "4.22.1"
+    "@x402/core": "^2.21.0",
+    "@x402/evm": "^2.21.0",
+    "express": "4.22.1",
+    "viem": "^2.55.11"
   }
 }

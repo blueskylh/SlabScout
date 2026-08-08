@@ -1,0 +1,42 @@
+name: Live E2E (manual, secrets-gated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_spend:
+        description: "Type I_UNDERSTAND_SPEND_TESTNET_USDC to run the spending E2E; anything else runs remote readiness only."
+        required: false
+        default: "READINESS_ONLY"
+
+jobs:
+  live-readiness:
+    runs-on: ubuntu-latest
+    environment: arc-testnet-live
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify required remote inputs are configured
+        env:
+          SLABSCOUT_LIVE_BASE_URL: ${{ secrets.SLABSCOUT_LIVE_BASE_URL }}
+          SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
+        run: |
+          test -n "$SLABSCOUT_LIVE_BASE_URL"
+          test -n "$SLABSCOUT_OPERATOR_TOKEN"
+      - name: Remote readiness check only
+        if: ${{ github.event.inputs.confirm_spend != 'I_UNDERSTAND_SPEND_TESTNET_USDC' }}
+        env:
+          SLABSCOUT_LIVE_BASE_URL: ${{ secrets.SLABSCOUT_LIVE_BASE_URL }}
+          SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
+          SLABSCOUT_READINESS_ONLY: 'true'
+          SLABSCOUT_HTTP_TIMEOUT_MS: '30000'
+        run: npm run live:e2e
+      - name: Spending live E2E against deployed MVP
+        if: ${{ github.event.inputs.confirm_spend == 'I_UNDERSTAND_SPEND_TESTNET_USDC' }}
+        env:
+          SLABSCOUT_LIVE_BASE_URL: ${{ secrets.SLABSCOUT_LIVE_BASE_URL }}
+          SLABSCOUT_OPERATOR_TOKEN: ${{ secrets.SLABSCOUT_OPERATOR_TOKEN }}
+          SLABSCOUT_LIVE_IDEMPOTENCY_KEY: ${{ secrets.SLABSCOUT_LIVE_IDEMPOTENCY_KEY }}
+          SLABSCOUT_HTTP_TIMEOUT_MS: '120000'
+        run: npm run live:e2e

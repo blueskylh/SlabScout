@@ -3,6 +3,7 @@ export type CheckStatus = 'pass' | 'warn' | 'fail'
 
 export interface Authorization {
   targetCard: string
+  displayLabel?: string
   targetItemId?: string
   targetRenaissItemId?: string
   targetHref?: string
@@ -31,6 +32,7 @@ export interface Offer {
   sellerAddress: string
   expiresAt: string
   targetCard: string
+  displayLabel?: string
   targetItemId?: string
   targetRenaissItemId?: string
   targetHref?: string
@@ -41,6 +43,7 @@ export interface Offer {
   certFound: boolean
   forceLowConfidence?: boolean
   narrative: string
+  narrativeZh?: string
 }
 
 export interface Signal {
@@ -104,9 +107,11 @@ export interface Signal {
 export interface PolicyCheck {
   id: string
   label: string
+  labelZh?: string
   status: CheckStatus
   severity: 'hard' | 'soft'
   details: string
+  detailsZh?: string
 }
 
 export interface Decision {
@@ -116,12 +121,20 @@ export interface Decision {
   checks: PolicyCheck[]
   metrics: Record<string, number | null>
   explanation: string
+  explanationZh?: string
 }
 
 export interface PaymentReceipt {
   status: string
+  providerStatus?: string
   confirmed?: boolean
+  simulated?: boolean
+  replayAccepted?: boolean
   receiptId: string | null
+  circlePaymentId?: string | null
+  txHash?: string | null
+  explorerUrl?: string | null
+  verification?: { ok: boolean; errors?: string[]; acceptance?: string }
   amountUsdc: number
   asset: string
   network: string
@@ -131,6 +144,7 @@ export interface PaymentReceipt {
 }
 
 export interface MarketProof {
+  proofKind?: 'MarketProof' | 'PolicyProof'
   proofVersion: string
   generatedAt: string
   proofHash: string
@@ -164,21 +178,43 @@ export interface EscrowReceipt {
   blockNumber?: number | null
   arcscanUrl?: string | null
   chainConfirmed?: boolean
-  event?: string
+  simulated?: boolean
+  replayAccepted?: boolean
+  event?: string | null
   note?: string
 }
 
 export interface TimelineItem {
   stage: string
+  stageZh?: string
   status: 'done' | 'warn' | 'blocked'
   note: string
+  noteZh?: string
   at: string
   txHash?: string | null
   receiptId?: string
 }
 
+export interface ReconciliationItem {
+  runId: string
+  owner?: string | null
+  amountUsdc?: number
+  status: string
+  createdAt?: string | null
+  runStatus?: string | null
+  idempotencyKey?: string | null
+  offerId?: string | null
+  stage?: Record<string, unknown> | null
+}
+
+export interface ReconciliationStatus {
+  unresolved: ReconciliationItem[]
+  count: number
+}
+
 export interface ScoutRunResult {
   runId: string
+  idempotencyKey?: string
   status: string
   mode: string
   executionStatus?: string

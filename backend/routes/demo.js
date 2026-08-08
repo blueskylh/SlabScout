@@ -1,6 +1,6 @@
 const router = require('express').Router()
-const { DEFAULT_AUTHORIZATION, DEMO_OFFERS, DEMO_CARD } = require('../../packages/shared')
-const { getCardSignal } = require('../../packages/renaiss-client')
+const { DEFAULT_AUTHORIZATION, DEMO_OFFERS, DEMO_CARD } = require('../packages/shared')
+const { getCardSignal } = require('../packages/renaiss-client')
 
 router.get('/', async (_req, res, next) => {
   try {

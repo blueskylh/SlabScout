@@ -1,3 +1,4 @@
+// SlabScout — bounded USDC agent demo UI.
 import { useEffect, useMemo, useState } from 'react'
 import { AuthorizationPanel } from './components/AuthorizationPanel'
 import { DecisionPanel } from './components/DecisionPanel'
@@ -7,11 +8,14 @@ import { ProofAndEscrow } from './components/ProofAndEscrow'
 import { SignalPanel } from './components/SignalPanel'
 import { StatusPill } from './components/StatusPill'
 import { Timeline } from './components/Timeline'
-import { getDemoConfig, runScout } from './lib/api'
+import { getDemoConfig, getReconciliations, runScout } from './lib/api'
+import { createLiveIdempotencyKey } from './lib/idempotency'
+import { I18nProvider, LanguageToggle, useI18n } from './lib/i18n'
 import type { Authorization, DemoConfig, Offer, ScoutRunResult } from './lib/types'
 
 const FALLBACK_AUTHORIZATION: Authorization = {
   targetCard: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
+  displayLabel: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
   targetItemId: '6e7fdc9a-8054-4034-bc02-8fb64209c688',
   targetRenaissItemId: '81d9d2d5-9adf-4f16-9bae-7fafabcce4ae',
   targetHref: '/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
@@ -25,8 +29,8 @@ const FALLBACK_AUTHORIZATION: Authorization = {
   minObservationCount: 5,
   maxLastSaleAgeDays: 14,
   maxMethodDeviationPct: 15,
-  maxIntelFeeUsdc: 0.01,
-  maxDepositUsdc: 0.5,
+  maxIntelFeeUsdc: 0.001,
+  maxDepositUsdc: 0.1,
   dailyBudgetUsdc: 1,
   spentTodayUsdc: 0,
   requireMarketProof: true,
@@ -37,6 +41,7 @@ const FALLBACK_OFFERS: Offer[] = [
     id: 'offer-reshizard-95',
     title: 'Seller A · verified discount',
     targetCard: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
+    displayLabel: 'Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10',
     targetItemId: '6e7fdc9a-8054-4034-bc02-8fb64209c688',
     targetRenaissItemId: '81d9d2d5-9adf-4f16-9bae-7fafabcce4ae',
     targetHref: '/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a',
@@ -49,11 +54,21 @@ const FALLBACK_OFFERS: Offer[] = [
     expiresAt: '2030-08-09T10:00:00.000Z',
     imageConfidence: 'high',
     certFound: true,
-    narrative: '真实 PSA cert 80396943 对应 Reshiram & Charizard-GX PSA 10，报价低于授权阈值。',
+    narrative: 'Real PSA cert 80396943 maps to this Reshiram & Charizard-GX PSA 10, and the ask is under the authorized ceiling.',
+    narrativeZh: '真实 PSA cert 80396943 对应 Reshiram & Charizard-GX PSA 10，报价低于授权阈值。',
   },
 ]
 
 export default function App() {
+  return (
+    <I18nProvider>
+      <SlabScout />
+    </I18nProvider>
+  )
+}
+
+function SlabScout() {
+  const { t } = useI18n()
   const [demo, setDemo] = useState<DemoConfig | null>(null)
   const [authorization, setAuthorization] = useState<Authorization>(FALLBACK_AUTHORIZATION)
   const [selectedOfferId, setSelectedOfferId] = useState(FALLBACK_OFFERS[0].id)
@@ -61,6 +76,9 @@ export default function App() {
   const [result, setResult] = useState<ScoutRunResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [operatorToken, setOperatorToken] = useState('')
+  const [pendingLiveIdempotencyKey, setPendingLiveIdempotencyKey] = useState<string | null>(null)
+  const [unresolvedReconciliation, setUnresolvedReconciliation] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -77,16 +95,43 @@ export default function App() {
     return () => { cancelled = true }
   }, [])
 
+  useEffect(() => {
+    if (mode !== 'live' || !operatorToken) {
+      setUnresolvedReconciliation(null)
+      return
+    }
+    let cancelled = false
+    getReconciliations(operatorToken)
+      .then((status) => {
+        if (!cancelled) setUnresolvedReconciliation(status.count > 0 ? status.unresolved[0]?.runId || 'unresolved-live-reconciliation' : null)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      })
+    return () => { cancelled = true }
+  }, [mode, operatorToken])
+
   const offers = demo?.offers || FALLBACK_OFFERS
   const selectedOffer = useMemo(() => offers.find((offer) => offer.id === selectedOfferId) || offers[0], [offers, selectedOfferId])
 
+  const reconciliationActive = mode === 'live' && Boolean(
+    unresolvedReconciliation ||
+    result?.executionStatus === 'reconciliation-required' ||
+    result?.payment?.status === 'reconciliation_required' ||
+    result?.escrow?.status === 'reconciliation_required',
+  )
+
   async function execute() {
-    if (!selectedOffer) return
+    if (!selectedOffer || reconciliationActive) return
     setLoading(true)
     setError(null)
     try {
-      const next = await runScout({ mode, offerId: selectedOffer.id, authorization })
+      const liveKey = mode === 'live' ? (pendingLiveIdempotencyKey || createLiveIdempotencyKey(selectedOffer.id)) : undefined
+      if (mode === 'live' && liveKey && !pendingLiveIdempotencyKey) setPendingLiveIdempotencyKey(liveKey)
+      const next = await runScout({ mode, offerId: selectedOffer.id, authorization, idempotencyKey: liveKey, operatorToken: mode === 'live' ? operatorToken : undefined })
       setResult(next)
+      const reconciliation = next.executionStatus === 'reconciliation-required' || next.payment?.status === 'reconciliation_required' || next.escrow?.status === 'reconciliation_required'
+      if (mode === 'live' && !reconciliation) setPendingLiveIdempotencyKey(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -95,7 +140,7 @@ export default function App() {
   }
 
   const signal = result?.signal || demo?.replaySignal
-  const finalAction = result?.finalDecision.action || 'INVESTIGATE'
+  const finalAction = result?.finalDecision.action || null
 
   return (
     <main className="min-h-screen bg-bg-chat text-fg-base">
@@ -103,19 +148,21 @@ export default function App() {
         <header className="overflow-hidden rounded-[32px] border border-border-strong bg-bg-base p-6 shadow-sm md:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl">
-              <div className="mb-4 flex flex-wrap gap-2">
-                <StatusPill tone={result ? finalAction : 'READY'}>{result ? finalAction : 'READY'}</StatusPill>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <StatusPill tone={result ? finalAction || 'READY' : 'READY'}>{result ? finalAction : 'READY'}</StatusPill>
                 <StatusPill tone="warn">Arc Testnet</StatusPill>
                 <StatusPill tone="pass">Renaiss backend-only</StatusPill>
+                <div className="ml-auto lg:hidden"><LanguageToggle /></div>
               </div>
               <h1 className="text-4xl font-black tracking-tight text-fg-base md:text-6xl">
                 SlabScout<span className="text-brand-100">.</span>
               </h1>
               <p className="mt-4 max-w-2xl text-lg leading-8 text-fg-subtle">
-                一个会先买市场证明、再自主锁定卡牌交易订金的 USDC 代理。用户只授权一次，之后由确定性规则引擎决定是否支付。
+                {t('hero.tagline')}
               </p>
             </div>
             <div className="flex flex-col gap-3 rounded-3xl border border-border-strong bg-bg-chat p-4 md:min-w-80">
+              <div className="hidden justify-end lg:flex"><LanguageToggle /></div>
               <div className="grid grid-cols-2 gap-2 rounded-2xl bg-bg-subtle p-1">
                 {(['replay', 'live'] as const).map((item) => (
                   <button
@@ -124,6 +171,7 @@ export default function App() {
                     onClick={() => {
                       setMode(item)
                       setResult(null)
+                      setPendingLiveIdempotencyKey(null)
                     }}
                     className={`rounded-xl px-4 py-2 text-sm font-black transition ${mode === item ? 'bg-bg-base text-brand-100 shadow-sm' : 'text-fg-subtle hover:text-fg-base'}`}
                   >
@@ -131,15 +179,31 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              {mode === 'live' ? (
+                <input
+                  className="rounded-2xl border border-border-strong bg-bg-base px-4 py-3 text-xs font-bold text-fg-base outline-none"
+                  type="password"
+                  placeholder={t('input.operatorToken')}
+                  value={operatorToken}
+                  onChange={(event) => setOperatorToken(event.target.value)}
+                />
+              ) : null}
               <button
                 type="button"
                 onClick={execute}
-                disabled={loading}
+                disabled={loading || reconciliationActive || (mode === 'live' && !operatorToken)}
                 className="rounded-2xl bg-brand-100 px-5 py-3 text-sm font-black text-white shadow-lg shadow-pink-500/20 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? 'Agent running…' : 'Run SlabScout Agent'}
+                {loading ? t('button.running') : reconciliationActive ? t('button.reconciliation') : mode === 'live' && !operatorToken ? t('button.needToken') : t('button.run')}
               </button>
-              <p className="text-xs leading-5 text-fg-subtle">Live 会优先请求 Renaiss；非证书类故障会进入 REPLAY_FALLBACK，但真实支付/锁仓会被禁止。</p>
+              <p className="text-xs leading-5 text-fg-subtle">{t('mode.live.note')}</p>
+              {reconciliationActive ? (
+                <p className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs font-bold leading-5 text-amber-700">
+                  {t('reconciliation.warning.prefix')}
+                  {unresolvedReconciliation ? t('reconciliation.warning.run', { run: unresolvedReconciliation }) : t('reconciliation.warning.keep')}
+                  {t('reconciliation.warning.suffix')}
+                </p>
+              ) : null}
             </div>
           </div>
         </header>
@@ -149,21 +213,23 @@ export default function App() {
         ) : null}
 
         <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-          <MetricCard label="Proof fee" value="0.001 USDC" helper="Circle nanopayment demo adapter" />
-          <MetricCard label="Demo deposit" value={`${selectedOffer?.depositUsdc || 0.1} USDC`} helper="Arc escrow reserve amount" />
-          <MetricCard label="Offer ask" value={`$${selectedOffer?.askUsd || 0}`} helper={selectedOffer?.title || 'Seller offer'} />
-          <MetricCard label="Policy" value="V1.1" helper={`Decision: ${finalAction}`} />
-          <MetricCard label="Execution" value={result?.executionStatus || 'not-started'} helper="separate from policy decision" />
+          <MetricCard label={t('metric.proofFee')} value="0.001 USDC" helper={t('metric.proofFee.helper')} />
+          <MetricCard label={t('metric.deposit')} value={`${selectedOffer?.depositUsdc || 0.1} USDC`} helper={t('metric.deposit.helper')} />
+          <MetricCard label={t('metric.ask')} value={`$${selectedOffer?.askUsd || 0}`} helper={selectedOffer?.title || t('metric.ask.helper')} />
+          <MetricCard label={t('metric.policy')} value="V1.2" helper={finalAction ? t('metric.policy.decision', { action: finalAction }) : t('metric.policy.notRun')} />
+          <MetricCard label={t('metric.execution')} value={result?.executionStatus || t('metric.execution.notStarted')} helper={t('metric.execution.helper')} />
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
           <AuthorizationPanel authorization={authorization} onChange={(next) => {
             setAuthorization(next)
             setResult(null)
+            setPendingLiveIdempotencyKey(null)
           }} />
           <OfferSelector offers={offers} selectedOfferId={selectedOfferId} onSelect={(id) => {
             setSelectedOfferId(id)
             setResult(null)
+            setPendingLiveIdempotencyKey(null)
           }} />
         </div>
 
@@ -172,25 +238,25 @@ export default function App() {
         {result ? (
           <>
             <Timeline items={result.timeline} />
-            <DecisionPanel decision={result.preliminary} title="规则初判" />
+            <DecisionPanel decision={result.preliminary} title={t('decision.preliminary')} />
             <ProofAndEscrow payment={result.payment} proof={result.proof} escrow={result.escrow} />
-            <DecisionPanel decision={result.finalDecision} title="规则复判" />
+            <DecisionPanel decision={result.finalDecision} title={t('decision.final')} />
             <section className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
-              <h2 className="text-lg font-black text-fg-base">审计凭证</h2>
-              <p className="mt-1 text-sm leading-6 text-fg-subtle">每次运行保留 policyVersion、规则结果、MarketProof 哈希和 Arc 交易哈希，便于复盘。</p>
+              <h2 className="text-lg font-black text-fg-base">{t('audit.title')}</h2>
+              <p className="mt-1 text-sm leading-6 text-fg-subtle">{t('audit.desc')}</p>
               <pre className="mt-4 overflow-auto rounded-2xl bg-neutral-950 p-4 text-xs leading-6 text-neutral-50">{JSON.stringify(result.audit, null, 2)}</pre>
             </section>
           </>
         ) : (
           <section className="rounded-[28px] border border-dashed border-border-contrast bg-bg-base p-8 text-center shadow-sm">
-            <h2 className="text-xl font-black text-fg-base">准备运行第一条代理决策</h2>
-            <p className="mt-2 text-sm leading-6 text-fg-subtle">选择 Seller A 展示 RESERVE 主路径；选择 Seller B 或 C 展示拒绝路径。</p>
+            <h2 className="text-xl font-black text-fg-base">{t('empty.title')}</h2>
+            <p className="mt-2 text-sm leading-6 text-fg-subtle">{t('empty.desc')}</p>
           </section>
         )}
 
         <footer className="rounded-[24px] border border-border-strong bg-bg-base p-5 text-sm leading-7 text-fg-subtle">
-          <strong className="text-fg-base">Demo disclosure:</strong> Renaiss API key/secret 仅放在 backend env；Arc 当前按 Testnet 展示，Circle/Arc 默认使用 deterministic mock/replay adapter；mock/replay 不会展示为真实 paid、reserved、tx hash 或 explorer evidence。
-          {signal?.card.pageUrl ? <a className="ml-2 font-bold text-brand-100" href={signal.card.pageUrl} target="_blank" rel="noreferrer">Open Renaiss card page</a> : null}
+          <strong className="text-fg-base">{t('footer.disclosureLabel')}</strong> {t('footer.disclosure')}
+          {signal?.card.pageUrl ? <a className="ml-2 font-bold text-brand-100" href={signal.card.pageUrl} target="_blank" rel="noreferrer">{t('footer.openCard')}</a> : null}
         </footer>
       </div>
     </main>

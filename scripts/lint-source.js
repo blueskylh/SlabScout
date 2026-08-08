@@ -2,7 +2,7 @@ const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const roots = ['backend', 'packages', 'tests', 'scripts']
+const roots = ['backend', 'tests', 'scripts']
 const files = []
 function walk(dir) {
   if (!fs.existsSync(dir)) return

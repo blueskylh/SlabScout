@@ -1,165 +1,159 @@
 # SlabScout
 
-SlabScout is an Arc Agentic Economy hackathon demo: a USDC agent that reads
-Renaiss OS Index card signals, buys a small MarketProof when the policy requires
-more confidence, and reserves a refundable deposit through an Arc Testnet escrow.
+[![CI](https://github.com/blueskylh/SlabScout/actions/workflows/ci.yml/badge.svg)](https://github.com/blueskylh/SlabScout/actions/workflows/ci.yml)
 
-The product is intentionally scoped to a 3-minute demo:
+| Submission item | Status |
+|---|---|
+| Online MVP URL | **待用户补充** |
+| Demo video | **待用户补充** |
+| Deck | `docs/PITCH_DECK.md` |
+| Arc Testnet contract | **待部署后补充** |
+| Example Circle/Arc tx | **待真实 Testnet 执行后补充** |
+| CI | GitHub Actions configured; link above |
 
-1. User grants one authorization: target card, max offer, min data confidence,
-   MarketProof fee cap, deposit cap, and daily budget.
-2. Seller agent submits a card offer.
-3. Backend-only Renaiss client reads identity, FMV methods, data quality,
-   recent observations, and market backdrop.
-4. Deterministic policy returns `RESERVE`, `INVESTIGATE`, or `REJECT`.
-5. `INVESTIGATE` buys a 0.001 USDC MarketProof through a Circle nanopayment
-   adapter and hashes the proof payload.
-6. If the post-proof policy passes, the Arc escrow adapter locks the demo USDC
-   deposit and returns a transaction receipt.
-7. The UI shows the full audit trail.
+SlabScout is an Arc Agentic Economy hackathon project: a bounded USDC agent that reads Renaiss OS Index card signals, makes deterministic policy decisions, pays for MarketProof only when authorized, and then reserves a refundable Arc Testnet escrow deposit only after proof verification.
+
+The product is intentionally scoped to a 3-minute MVP demo. It does **not** buy a physical card and does **not** pay the full card price. Real-fund scope is capped to:
+
+- MarketProof: max `0.001 USDC`.
+- Escrow deposit: max `0.10 USDC`.
+- Chain: Arc Testnet only, chain ID `5042002`.
 
 ## Repository layout
 
 ```text
 backend/                 Surf Studio backend runtime and API routes
 frontend/                Vite + React Surf Studio frontend
-packages/renaiss-client  Backend-only Renaiss API wrapper, cache, replay fallback
-packages/policy-engine   Pure deterministic rule engine
-packages/market-proof    Hash + signature proof builder
-packages/shared          Shared demo config and utilities
-contracts/               ReservationEscrow.sol and lightweight fixture
+backend/packages/renaiss-client  Backend-only Renaiss API wrapper, cache, cert-first live flow
+backend/packages/policy-engine   Pure deterministic rule engine
+backend/packages/market-proof    MarketProof / PolicyProof builders and verifiers
+backend/packages/shared          Shared constants, demo allowlist, validation
+contracts/               Foundry ReservationEscrow project and tests
+scripts/                 CI smoke / lint / secret scan helpers
+docs/                    Architecture, threat model, deployment, demo, deck, checklist
 ```
 
-## MVP implementation status
+## Current implementation status
 
-P0-A.1 correctness hardening is implemented in this repository:
+Implemented after baseline `c14a5b4` and hardened further on `final/agentic-economy-mvp`:
 
-- Arc Testnet chain ID is `5042002`.
-- Arc Testnet USDC is `0x3600000000000000000000000000000000000000`.
-- Demo identity now uses a real PSA cert: `80396943` for Reshiram & Charizard-GX · Tag All Stars · Japanese · PSA 10.
-- Renaiss live mode calls `/v1/graded/{cert}` first and treats returned `itemId` + `card.href` as identity truth.
-- Authorization, offer, cert lookup, and card detail must match structurally on card identity, href, grading company, grade, and cert.
-- Invalid/unauthorized/not-found cert lookup is a hard `REJECT`; it does not silently switch to replay.
-- Renaiss trades use `scope=grade`, normalize `observedAt`, and expose transaction rows separately from listings; if source rows are aggregate-only, the proof labels them as `aggregate-only`.
-- Offers now require target item/href, certificate number, expiry, amount, seller address, and enum validation. Unknown `offerId` is an error, not Seller A fallback.
-- MarketProof can be verified by reconstructing the canonical payload, checking a full 32-byte proof hash, HMAC signature, offer/cert/price/payment bindings, expiry, and source TTL.
-- Runtime config validates Arc Testnet chain ID, USDC address, execution-mode enums, proof hash, and non-zero live EVM addresses.
-- Replay has priority over live Circle/Arc env and never calls a wallet; live Renaiss failure becomes `REPLAY_FALLBACK` and prohibits real payment.
-- Mock adapters no longer return fake live tx hashes; replay receipts are labelled `replay-*`, not live payment / explorer evidence.
+- Real demo identity: PSA cert `80396943`, itemId `6e7fdc9a-8054-4034-bc02-8fb64209c688`, href `/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a`.
+- Live Renaiss mode is cert-first and treats returned `itemId` + `card.href` as identity truth.
+- `400 / 401 / 404` cert errors are hard `REJECT`, not replay fallback.
+- Network/5xx Renaiss fallback is `REPLAY_FALLBACK` and blocks payment/proof/escrow.
+- Public `/api/scout/run` accepts only trusted `offerId`; `body.offer` is rejected.
+- Live `/api/scout/run` requires an operator token with timing-safe comparison before any Renaiss, Circle, or Arc call; invalid public modes such as `live-cache` are rejected, and frontend live runs always include an idempotency key.
+- MarketProof verifier ignores caller-supplied `verified` / `verification.ok`; it recalculates canonical hash, HMAC, offer/cert/payment/TTL/mode bindings.
+- Payment verifier rejects `status=paid` unless provider confirmation, receipt/tx, chain, asset, payer/payee, idempotency and amount bindings pass.
+- Replay payment uses `replay-payment-simulated`, `confirmed=false`, `simulated=true`; replay escrow uses `chainConfirmed=false` and no tx/explorer evidence.
+- `requireMarketProof=false` uses independent `PolicyProof`, not MarketProof.
+- Server-side state store covers idempotency, payment intents, payment/proof/reservation records, audit records and budget holds. Live execution fails closed unless a writable single-instance `SLABSCOUT_STATE_FILE` is configured.
+- Foundry contract project, deployment script and escrow tests were added.
+- CI includes deterministic frontend/backend install, Node tests, lint, frontend checks, build, backend smoke, Foundry build/test and secret scan.
 
-P0-B/P0-C/P0-D still require Circle Agent Wallet login, test USDC funding, x402/Nanopayment wiring, Arc deployment, and persistent budget/idempotency storage before the project can be called live-capable. P0-A.1 intentionally does not integrate real payment.
+Not yet complete because external credentials/funds/deployment are missing:
+
+- Real Circle Agent Wallet/x402 payment is wired through Circle CLI `0.0.6`-style envelopes + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured. `services pay` relies on SlabScout application-level idempotency; wallet `approve/reserve` uses Circle wallet-execute external idempotency keys.
+- Real Arc escrow reserve is wired through Circle CLI `approve`/`reserve` plus Arc RPC receipt/event verification, but remains unavailable until the escrow contract is deployed and the wallet is funded/authorized.
+- Public MVP URL, video, deck export link and real tx evidence are pending user/deployment steps.
+
+## Demo paths
+
+- Seller A (`offer-reshizard-95`): compliant discount path. Replay shows `INVESTIGATE → simulated MarketProof → RESERVE policy → replay escrow simulation` without fake paid/tx evidence.
+- Seller B (`offer-reshizard-120`): overpriced path. `REJECT`, zero payment.
+- Seller C (`offer-low-confidence`): weak data/identity-quality path. `REJECT`, zero payment.
 
 ## Environment
 
-Never commit real credentials. Copy the examples and fill them locally or in Surf
-Studio server env settings.
+Never commit real credentials. Copy examples and configure secrets only in backend/deployment env.
 
 ```bash
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 ```
 
-Required backend variable:
+Required for local replay:
 
 - `BACKEND_PORT`
 
-Optional but recommended for live mode:
+Required for live readiness:
 
-- `RENAISS_API_BASE_URL`
-- `RENAISS_API_KEY`
-- `RENAISS_API_SECRET`
-- `MARKET_PROOF_SIGNING_SECRET`
-- `CIRCLE_MODE`
-- `ARC_EXECUTION_MODE`
-- `RESERVATION_ESCROW_ADDRESS`
-- `AGENT_WALLET_ADDRESS`
+- `SLABSCOUT_OPERATOR_TOKEN`
+- `SLABSCOUT_STATE_FILE` — current live persistence is single-instance file state; `DATABASE_URL` is not implemented in this MVP
+- `RENAISS_API_KEY` / `RENAISS_API_SECRET`
+- `MARKET_PROOF_SIGNING_SECRET` / `POLICY_PROOF_SIGNING_SECRET`
+- Circle CLI installed/logged in, `CIRCLE_AGENT_WALLET_ADDRESS`, `MARKET_PROOF_SERVICE_URL`, `MARKET_PROOF_SELLER_ADDRESS`
+- `RESERVATION_ESCROW_ADDRESS`, `AGENT_WALLET_ADDRESS`, `ARC_RPC_URL`
 
-The supplied Renaiss key must stay in `backend/.env` or Surf Studio server envs.
-Do not create `VITE_` variables for it.
+Renaiss and Circle secrets must remain backend-only. Do not create `VITE_` variables for them.
 
-## Local development and checks
+## Local development
 
-In two terminals:
+```bash
+npm --prefix backend ci --no-audit --no-fund
+npm --prefix frontend ci --no-audit --no-fund
+```
+
+Backend:
 
 ```bash
 cd backend
-bun install
-bun run dev
+npm run dev
 ```
+
+Frontend:
 
 ```bash
 cd frontend
-bun install
-bun run dev
+npm run dev
 ```
 
-If Bun is unavailable, npm can run the same package scripts after installing the locked dependencies.
-
-Root-level checks added for MVP hardening:
+## Checks
 
 ```bash
+npm run secret-scan
 npm test
 npm run lint
-npm --prefix frontend install
+npm --prefix frontend run lint
 npm run type-check
 BACKEND_PORT=3001 BASE_PATH=/ npm run build
+BACKEND_PORT=3001 BASE_PATH=/ npm run smoke:backend
+cd contracts && forge build && forge test -vvv
 ```
 
-The frontend build script requires `BACKEND_PORT` and `BASE_PATH` to be defined, matching the Surf Studio template guard.
-
-## Demo paths
-
-- Seller A (`offer-reshizard-95`) demonstrates the reserve path: Renaiss signal
-  passes hard gates, proof-required triggers MarketProof, the post-proof policy
-  becomes `RESERVE`, then the replay escrow branch confirms a labelled 0.10 USDC
-  reservation fixture.
-- Seller B (`offer-reshizard-120`) is rejected because the ask is above the
-  authorization limits.
-- Seller C (`offer-low-confidence`) is rejected because identity/data quality is
-  below the authorization threshold.
+This execution environment does not have `forge` installed; contract tests are configured for CI / local Foundry environments.
 
 ## API routes
 
-- `GET /api/demo` — demo config, replay signal, and disclosures.
-- `POST /api/scout/run` — full SlabScout orchestration.
-- `GET /api/scout/audits` — in-memory audit trail.
+- `GET /api/status` — runtime status and config-only missing live env list.
+- `GET /api/status/live-readiness` — operator-token protected, read-only live readiness checks; never pays or sends transactions.
+- `GET /api/demo` — trusted offers, default authorization, replay signal, disclosures.
+- `POST /api/scout/run` — full orchestration. Public replay; live requires `x-slabscout-operator-token`.
+- `GET /api/scout/audits` — audit trail.
 - `GET /api/market-proof/quote` — proof service quote.
-- `POST /api/market-proof/prove` — standalone proof generation.
-- `GET /api/status` — runtime status.
+- `POST /api/market-proof/prove` — live x402 seller endpoint; uses Circle Gateway middleware, refetches Renaiss server-side, and rejects client-submitted signal/valuation/trades.
 
-## Policy V1 hard rules
+Manual `live:e2e` is available for a deployed MVP; the GitHub workflow is readiness-only unless explicitly dispatched with `confirm_spend=I_UNDERSTAND_SPEND_TESTNET_USDC`.
 
-- Certificate lookup must be found and structurally match the authorized target item/href, grading company, grade, and offer cert.
-- Renaiss confidence must meet the authorization minimum (`medium` by default;
-  `high` / `prime` pass).
-- `sourceCount >= 2` and `observationCount >= 5`.
-- Last completed sale must be within 14 days.
-- Offer ask must be no higher than the lesser of user max price and the
-  configured percentage of the 7-day median.
-- Mean and VWAP must be within 15% of the median.
-- MarketProof fee, deposit, and total daily spend must remain inside budget.
-- If `requireMarketProof=true`, a verified MarketProof is required before escrow; if it is disabled, the 0.001 USDC intel fee is not counted in budget.
+## Contract
+
+`contracts/ReservationEscrow.sol` locks a refundable Arc Testnet USDC deposit with SafeERC20-style transfer checks. The deploy script rejects non-Arc-Testnet chain IDs and wrong USDC address.
+
+## Docs
+
+- `docs/ARCHITECTURE.md`
+- `docs/THREAT_MODEL.md`
+- `docs/DEPLOYMENT.md`
+- `docs/DEMO_SCRIPT.md`
+- `docs/PITCH_DECK.md`
+- `docs/SUBMISSION_CHECKLIST.md`
+- `docs/OPENAPI_NOTES.md`
+- `docs/MANUAL_REVIEW_LOG.md`
+- `docs/DEPENDENCY_RISK.md`
 
 ## Security notes
 
-- Renaiss credentials are backend-only and ignored in replay mode.
-- `.env*`, private keys, logs, and build outputs are gitignored.
-- Recent trade rows with `kind=listing` are explicitly excluded from MarketProof.
-- Arc Testnet USDC is treated as a 6-decimal ERC-20 in the Solidity contract.
-- Circle/Arc adapters default to deterministic mock/replay receipts so the hackathon UI
-  is stable and never fabricates a live transaction hash. The Circle CLI command shape is `circle services pay <url> --address <address> --chain <chain> --max-amount <usdc>`; wire real `circle services pay` and wallet execution only on the server after wallet envs are configured.
-
-## Manual review loop record
-
-See `docs/MANUAL_REVIEW_LOG.md` for the pass-by-pass source reading record. The implementation was reviewed manually across ten passes before handoff:
-
-1. Secret handling and `.gitignore` boundaries.
-2. Renaiss endpoint mapping, auth headers, timeout/retry/cache, replay fallback.
-3. Policy hard-gate math and RESERVE/INVESTIGATE/REJECT separation.
-4. `refreshing=true` handling and proof-before-escrow flow.
-5. MarketProof hash, signature, source attribution, and listing exclusion.
-6. Circle/Arc adapters and mock-vs-live disclosure boundaries.
-7. Solidity escrow state transitions, amount caps, and refund path.
-8. Frontend relative API routing for Surf Studio base paths.
-9. UI copy: Arc Testnet/demo disclosures and Renaiss attribution.
-10. End-to-end code readability, error handling, and audit trail completeness.
+- Replay/mock never returns real `paid`, `reserved`, tx hash, block number, or explorer evidence.
+- Live mode fails closed when operator token, writable state file, Circle CLI/session/config, Renaiss secrets, escrow address, wallet funding/allowance, or Arc Testnet checks are missing.
+- Secret scan blocks committed Renaiss/Circle/private keys.
+- Mainnet is not supported.

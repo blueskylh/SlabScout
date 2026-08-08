@@ -4,11 +4,15 @@ const {
   ZERO_ADDRESS,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
   DEFAULT_ESCROW_DEPOSIT_USDC,
+  MAX_MARKET_PROOF_FEE_USDC,
+  MAX_ESCROW_DEPOSIT_USDC,
+  ARC_TESTNET_NAME,
   DEMO_TARGET,
 } = require('./constants')
 
 const DEFAULT_AUTHORIZATION = Object.freeze({
   targetCard: DEMO_TARGET.targetCard,
+  displayLabel: DEMO_TARGET.targetCard,
   targetItemId: DEMO_TARGET.targetItemId,
   targetRenaissItemId: DEMO_TARGET.targetRenaissItemId,
   targetHref: DEMO_TARGET.targetHref,
@@ -22,8 +26,8 @@ const DEFAULT_AUTHORIZATION = Object.freeze({
   minObservationCount: 5,
   maxLastSaleAgeDays: 14,
   maxMethodDeviationPct: 15,
-  maxIntelFeeUsdc: 0.01,
-  maxDepositUsdc: 0.5,
+  maxIntelFeeUsdc: MAX_MARKET_PROOF_FEE_USDC,
+  maxDepositUsdc: MAX_ESCROW_DEPOSIT_USDC,
   dailyBudgetUsdc: 1,
   spentTodayUsdc: 0,
   requireMarketProof: true,
@@ -42,6 +46,7 @@ function makeDemoOffer(id, overrides) {
     title: overrides.title,
     card: DEMO_CARD,
     targetCard: DEMO_TARGET.targetCard,
+    displayLabel: DEMO_TARGET.targetCard,
     targetItemId: DEMO_TARGET.targetItemId,
     targetRenaissItemId: DEMO_TARGET.targetRenaissItemId,
     targetHref: DEMO_TARGET.targetHref,
@@ -56,6 +61,7 @@ function makeDemoOffer(id, overrides) {
     certFound: overrides.certFound,
     forceLowConfidence: overrides.forceLowConfidence || false,
     narrative: overrides.narrative,
+    narrativeZh: overrides.narrativeZh,
   })
 }
 
@@ -66,7 +72,8 @@ const DEMO_OFFERS = Object.freeze([
     sellerAddress: '0x5000000000000000000000000000000000000001',
     imageConfidence: 'high',
     certFound: true,
-    narrative: '真实 PSA cert 80396943 对应 Reshiram & Charizard-GX PSA 10，报价低于授权阈值。',
+    narrative: 'Real PSA cert 80396943 maps to this Reshiram & Charizard-GX PSA 10, and the ask is under the authorized ceiling.',
+    narrativeZh: '真实 PSA cert 80396943 对应 Reshiram & Charizard-GX PSA 10，报价低于授权阈值。',
   }),
   makeDemoOffer('offer-reshizard-120', {
     title: 'Seller B · overpriced branch',
@@ -74,7 +81,8 @@ const DEMO_OFFERS = Object.freeze([
     sellerAddress: '0x5000000000000000000000000000000000000002',
     imageConfidence: 'high',
     certFound: true,
-    narrative: '报价高于授权价格上限，必须拒绝且不发生支付。',
+    narrative: 'The ask sits above the authorized price ceiling, so it must be rejected with no payment at all.',
+    narrativeZh: '报价高于授权价格上限，必须拒绝且不发生支付。',
   }),
   makeDemoOffer('offer-low-confidence', {
     title: 'Seller C · weak data branch',
@@ -83,7 +91,8 @@ const DEMO_OFFERS = Object.freeze([
     imageConfidence: 'medium',
     certFound: true,
     forceLowConfidence: true,
-    narrative: '数据质量被压低，即使价格便宜也不能自动锁订金。',
+    narrative: 'Data quality is deliberately degraded, so even a cheap ask cannot auto-reserve a deposit.',
+    narrativeZh: '数据质量被压低，即使价格便宜也不能自动锁订金。',
   }),
 ])
 
@@ -142,5 +151,8 @@ module.exports = {
   ZERO_ADDRESS,
   DEFAULT_MARKET_PROOF_PRICE_USDC,
   DEFAULT_ESCROW_DEPOSIT_USDC,
+  MAX_MARKET_PROOF_FEE_USDC,
+  MAX_ESCROW_DEPOSIT_USDC,
+  ARC_TESTNET_NAME,
   DEMO_TARGET,
 }

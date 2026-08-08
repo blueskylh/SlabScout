@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n'
 import type { Offer } from '../lib/types'
 import { StatusPill } from './StatusPill'
 
@@ -8,13 +9,15 @@ interface Props {
 }
 
 export function OfferSelector({ offers, selectedOfferId, onSelect }: Props) {
+  const { t, pick } = useI18n()
   return (
     <section className="rounded-[28px] border border-border-strong bg-bg-base p-5 shadow-sm">
-      <h2 className="text-lg font-black text-fg-base">卖家报价分支</h2>
-      <p className="mt-1 text-sm leading-6 text-fg-subtle">演示必须同时证明代理会花钱，也会拒绝不合规报价。</p>
+      <h2 className="text-lg font-black text-fg-base">{t('offers.title')}</h2>
+      <p className="mt-1 text-sm leading-6 text-fg-subtle">{t('offers.desc')}</p>
       <div className="mt-5 grid gap-3">
         {offers.map((offer) => {
           const active = offer.id === selectedOfferId
+          const askTone = offer.forceLowConfidence ? 'warn' : offer.askUsd <= 100 ? 'pass' : 'fail'
           return (
             <button
               key={offer.id}
@@ -24,11 +27,11 @@ export function OfferSelector({ offers, selectedOfferId, onSelect }: Props) {
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="font-black text-fg-base">{offer.title}</div>
-                <StatusPill tone={offer.forceLowConfidence ? 'warn' : offer.askUsd > 400 ? 'fail' : 'pass'}>
+                <StatusPill tone={askTone}>
                   ${offer.askUsd}
                 </StatusPill>
               </div>
-              <p className="mt-2 text-sm leading-6 text-fg-subtle">{offer.narrative}</p>
+              <p className="mt-2 text-sm leading-6 text-fg-subtle">{pick(offer, 'narrative')}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-fg-subtle">
                 <span className="rounded-full bg-bg-subtle px-2 py-1">deposit {offer.depositUsdc} USDC</span>
                 <span className="rounded-full bg-bg-subtle px-2 py-1">cert {offer.certNumber}</span>

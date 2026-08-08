@@ -1,3 +1,4 @@
+import { useI18n } from '../lib/i18n'
 import type { Signal } from '../lib/types'
 import { MetricCard } from './MetricCard'
 import { StatusPill } from './StatusPill'
@@ -14,6 +15,7 @@ function dateLabel(value?: string | null) {
 }
 
 export function SignalPanel({ signal }: { signal: Signal }) {
+  const { t } = useI18n()
   const medianLine = signal.trend.find((line) => line.method === 'median')
   const points = medianLine?.points || []
   const values = points.map((point) => point.usd)
@@ -49,10 +51,10 @@ export function SignalPanel({ signal }: { signal: Signal }) {
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard label="7D Median" value={money(signal.valuation.medianUsd)} helper="硬规则主锚定价" />
-            <MetricCard label="Mean" value={money(signal.valuation.meanUsd)} helper="与中位价偏差受限" />
-            <MetricCard label="VWAP" value={money(signal.valuation.vwapUsd)} helper="成交权重一致性" />
-            <MetricCard label="Sources / Obs" value={`${signal.quality.sourceCount} / ${signal.quality.observationCount}`} helper={`last sale ${dateLabel(signal.quality.lastSaleAt)}`} />
+            <MetricCard label="7D Median" value={money(signal.valuation.medianUsd)} helper={t('signal.median.helper')} />
+            <MetricCard label="Mean" value={money(signal.valuation.meanUsd)} helper={t('signal.mean.helper')} />
+            <MetricCard label="VWAP" value={money(signal.valuation.vwapUsd)} helper={t('signal.vwap.helper')} />
+            <MetricCard label="Sources / Obs" value={`${signal.quality.sourceCount} / ${signal.quality.observationCount}`} helper={t('signal.lastSale', { date: dateLabel(signal.quality.lastSaleAt) })} />
           </div>
 
           <div className="mt-5 rounded-2xl border border-border-strong bg-bg-chat p-4">

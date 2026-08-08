@@ -7,8 +7,8 @@ interface IERC20 {
 }
 
 /// @title ReservationEscrow
-/// @notice Minimal Arc Testnet USDC escrow used by SlabScout's hackathon demo.
-/// @dev USDC uses 6 decimals. App-layer policy must approve only authorized amounts.
+/// @notice Arc Testnet USDC escrow used by SlabScout. The contract only locks a refundable deposit; it never pays the full card price.
+/// @dev USDC uses 6 decimals. App-layer policy must approve only authorized Arc Testnet amounts.
 contract ReservationEscrow {
     enum Status {
         None,
@@ -31,14 +31,7 @@ contract ReservationEscrow {
 
     mapping(bytes32 => Reservation) public reservations;
 
-    event Reserved(
-        bytes32 indexed offerId,
-        address indexed buyer,
-        address indexed seller,
-        uint256 amount,
-        bytes32 proofHash,
-        uint64 refundAfter
-    );
+    event Reserved(bytes32 indexed offerId, address indexed buyer, address indexed seller, uint256 amount, bytes32 proofHash, uint64 refundAfter);
     event Released(bytes32 indexed offerId, address indexed seller, uint256 amount);
     event Refunded(bytes32 indexed offerId, address indexed buyer, uint256 amount);
 
@@ -58,13 +51,7 @@ contract ReservationEscrow {
         maxReservationAmount = maxReservationAmount_;
     }
 
-    function reserve(
-        bytes32 offerId,
-        address seller,
-        uint256 amount,
-        bytes32 proofHash,
-        uint64 refundAfter
-    ) external {
+    function reserve(bytes32 offerId, address seller, uint256 amount, bytes32 proofHash, uint64 refundAfter) external {
         if (offerId == bytes32(0) || seller == address(0) || seller == msg.sender) revert InvalidAddress();
         if (amount == 0 || amount > maxReservationAmount) revert InvalidAmount();
         if (proofHash == bytes32(0)) revert InvalidAddress();
@@ -80,7 +67,7 @@ contract ReservationEscrow {
             status: Status.Reserved
         });
 
-        if (!usdc.transferFrom(msg.sender, address(this), amount)) revert TransferFailed();
+        _safeTransferFrom(address(usdc), msg.sender, address(this), amount);
         emit Reserved(offerId, msg.sender, seller, amount, proofHash, refundAfter);
     }
 
@@ -90,7 +77,7 @@ contract ReservationEscrow {
         if (msg.sender != reservation.buyer) revert OnlyBuyerCanRelease();
 
         reservation.status = Status.Released;
-        if (!usdc.transfer(reservation.seller, reservation.amount)) revert TransferFailed();
+        _safeTransfer(address(usdc), reservation.seller, reservation.amount);
         emit Released(offerId, reservation.seller, reservation.amount);
     }
 
@@ -100,7 +87,17 @@ contract ReservationEscrow {
         if (block.timestamp < reservation.refundAfter) revert RefundTooEarly();
 
         reservation.status = Status.Refunded;
-        if (!usdc.transfer(reservation.buyer, reservation.amount)) revert TransferFailed();
+        _safeTransfer(address(usdc), reservation.buyer, reservation.amount);
         emit Refunded(offerId, reservation.buyer, reservation.amount);
+    }
+
+    function _safeTransfer(address token, address to, uint256 value) private {
+        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, value));
+        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
+    }
+
+    function _safeTransferFrom(address token, address from, address to, uint256 value) private {
+        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value));
+        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TransferFailed();
     }
 }
