@@ -1,114 +1,144 @@
+<div align="center">
+
 # SlabScout
 
-[![CI](https://github.com/blueskylh/SlabScout/actions/workflows/ci.yml/badge.svg)](https://github.com/blueskylh/SlabScout/actions/workflows/ci.yml)
+**Check the card. Check the price. Spend only inside your rules.**
 
-| Submission item | Status |
-|---|---|
-| Online MVP URL | **待用户补充** |
-| Demo video | **待用户补充** |
-| Deck | `docs/PITCH_DECK.md` |
-| Arc Testnet contract | **待部署后补充** |
-| Example Circle/Arc tx | **待真实 Testnet 执行后补充** |
-| CI | GitHub Actions configured; link above |
+SlabScout is a small AI-agent demo for graded trading-card offers.<br>
+It checks the card and market price first, then decides whether to reject the offer, ask for more proof, or allow a small refundable testnet deposit.
 
-SlabScout is an Arc Agentic Economy hackathon project: a bounded USDC agent that reads Renaiss OS Index card signals, makes deterministic policy decisions, pays for MarketProof only when authorized, and then reserves a refundable Arc Testnet escrow deposit only after proof verification.
+<p>
+  <a href="https://slabscout-800018.surf.computer/"><img alt="Open live demo" src="https://img.shields.io/badge/Open_Live_Demo-ff2d7a?style=for-the-badge"></a>
+  <a href="https://github.com/blueskylh/SlabScout/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/blueskylh/SlabScout/ci.yml?branch=main&amp;style=for-the-badge&amp;label=CI"></a>
+  <img alt="Arc Testnet" src="https://img.shields.io/badge/Arc-Testnet-f59e0b?style=for-the-badge">
+  <img alt="Safe replay demo" src="https://img.shields.io/badge/Default-Safe_Replay-00a878?style=for-the-badge">
+</p>
 
-The product is intentionally scoped to a 3-minute MVP demo. It does **not** buy a physical card and does **not** pay the full card price. Real-fund scope is capped to:
+[English](README.md) · [简体中文](README_CN.md)
 
-- MarketProof: max `0.001 USDC`.
-- Escrow deposit: max `0.10 USDC`.
-- Chain: Arc Testnet only, chain ID `5042002`.
+</div>
 
-## Repository layout
+![SlabScout showing card prices and the agent decision trail](docs/assets/slabscout-demo.webp)
 
-```text
-backend/                 Surf Studio backend runtime and API routes
-frontend/                Vite + React Surf Studio frontend
-backend/packages/renaiss-client  Backend-only Renaiss API wrapper, cache, cert-first live flow
-backend/packages/policy-engine   Pure deterministic rule engine
-backend/packages/market-proof    MarketProof / PolicyProof builders and verifiers
-backend/packages/shared          Shared constants, demo allowlist, validation
-contracts/               Foundry ReservationEscrow project and tests
-scripts/                 CI smoke / lint / secret scan helpers
-docs/                    Architecture, threat model, deployment, demo, deck, checklist
+> [!IMPORTANT]
+> The public demo opens in **Replay mode**. It uses a fixed demo snapshot, and its payment and deposit are simulated. It does **not** spend real money, buy a physical card, or claim a real blockchain transaction.
+
+## Try it in one minute
+
+1. Open the **[live demo](https://slabscout-800018.surf.computer/)**.
+2. Keep **REPLAY** selected.
+3. Choose Seller A, B, or C.
+4. Click **Run SlabScout Agent** and follow the decision trail.
+5. Use the language button in the top-right corner to switch between English and Chinese.
+
+| Demo offer | Result | Plain-English reason |
+|---|---|---|
+| Seller A · **$95** | ✅ `RESERVE` | The card, price, and market proof pass the rules. The test deposit is simulated. |
+| Seller B · **$120** | ❌ `REJECT` | The price is above the user's limit, so SlabScout spends nothing. |
+| Seller C · **$90** | ❌ `REJECT` | The price is low, but the data is too weak, so SlabScout spends nothing. |
+
+## Why SlabScout exists
+
+A card offer can look cheap and still be risky. It may be the wrong card, the price data may be old, or there may not be enough real sales to trust.
+
+SlabScout follows a simple rule: **check first, spend second**.
+
+Before it can move any testnet USDC, it checks:
+
+- Is this the exact card, grade, and certificate?
+- Is the seller's price inside the user's limit?
+- Is the market data recent and strong enough?
+- Is the proof fee inside the allowed amount?
+- Is the deposit and daily budget still inside the user's limits?
+- Did the proof and payment details match exactly?
+
+If any required check fails, the answer is **no** and the agent stops.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A["1. You set price and spending limits"] --> B["2. SlabScout checks the card and market data"]
+    B --> C{"3. Does the offer pass?"}
+    C -->|No| D["Reject · spend 0"]
+    C -->|More proof needed| E["Pay up to 0.001 USDC for MarketProof"]
+    E --> F{"4. Does the proof pass?"}
+    F -->|No| D
+    F -->|Yes| G["Allow a 0.10 USDC refundable testnet deposit"]
 ```
 
-## Current implementation status
+**MarketProof** is a small signed report made from market data. In the public Replay demo, paying for this report is simulated.
 
-Implemented after baseline `c14a5b4` and hardened further on `final/agentic-economy-mvp`:
+## Demo limits and current status
 
-- Real demo identity: PSA cert `80396943`, itemId `6e7fdc9a-8054-4034-bc02-8fb64209c688`, href `/card/pokemon/tag-all-stars/16-reshiram-charizard-gx-psa-10-japanese-6e7fdc9a`.
-- Live Renaiss mode is cert-first and treats returned `itemId` + `card.href` as identity truth.
-- `400 / 401 / 404` cert errors are hard `REJECT`, not replay fallback.
-- Network/5xx Renaiss fallback is `REPLAY_FALLBACK` and blocks payment/proof/escrow.
-- Public `/api/scout/run` accepts only trusted `offerId`; `body.offer` is rejected.
-- Live `/api/scout/run` requires an operator token with timing-safe comparison before any Renaiss, Circle, or Arc call; invalid public modes such as `live-cache` are rejected, and frontend live runs always include an idempotency key.
-- MarketProof verifier ignores caller-supplied `verified` / `verification.ok`; it recalculates canonical hash, HMAC, offer/cert/payment/TTL/mode bindings.
-- Payment verifier rejects `status=paid` unless provider confirmation, receipt/tx, chain, asset, payer/payee, idempotency and amount bindings pass.
-- Replay payment uses `replay-payment-simulated`, `confirmed=false`, `simulated=true`; replay escrow uses `chainConfirmed=false` and no tx/explorer evidence.
-- `requireMarketProof=false` uses independent `PolicyProof`, not MarketProof.
-- Server-side state store covers idempotency, payment intents, payment/proof/reservation records, audit records and budget holds. Live execution fails closed unless a writable single-instance `SLABSCOUT_STATE_FILE` is configured.
-- Foundry contract project, deployment script and escrow tests were added.
-- CI includes deterministic frontend/backend install, Node tests, lint, frontend checks, build, backend smoke, Foundry build/test and secret scan.
+| Item | Current value |
+|---|---|
+| Public app | [slabscout-800018.surf.computer](https://slabscout-800018.surf.computer/) |
+| Default public mode | Replay — safe, stable, and no real spending |
+| Card data | Renaiss OS Index; Replay uses a fixed snapshot |
+| Maximum proof fee | `0.001 USDC` |
+| Maximum refundable deposit | `0.10 USDC` |
+| Network | Arc Testnet only · chain ID `5042002` |
+| Escrow contract | [`0xCB51…eD59`](https://testnet.arcscan.app/address/0xCB5185f2F445a143A3c5b2ec844B37dbb7D3eD59) |
 
-Not yet complete because external credentials/funds/deployment are missing:
+The app also has an operator-only **Live** path. It needs an operator token, an authenticated Circle CLI session on the buyer machine, funded test wallets, and the full server setup. Live mode is not required to explore the public Replay demo.
 
-- Real Circle Agent Wallet/x402 payment is wired through Circle CLI `0.0.6`-style envelopes + the x402 seller endpoint, but remains fail-closed until Circle CLI login, wallet funding, MarketProof service URL, seller address and a writable state file are configured. `services pay` relies on SlabScout application-level idempotency; wallet `approve/reserve` uses Circle wallet-execute external idempotency keys.
-- Real Arc escrow reserve is wired through Circle CLI `approve`/`reserve` plus Arc RPC receipt/event verification, but remains unavailable until the escrow contract is deployed and the wallet is funded/authorized.
-- Public MVP URL, video, deck export link and real tx evidence are pending user/deployment steps.
+## Run the safe demo locally
 
-## Demo paths
+### What you need
 
-- Seller A (`offer-reshizard-95`): compliant discount path. Replay shows `INVESTIGATE → simulated MarketProof → RESERVE policy → replay escrow simulation` without fake paid/tx evidence.
-- Seller B (`offer-reshizard-120`): overpriced path. `REJECT`, zero payment.
-- Seller C (`offer-low-confidence`): weak data/identity-quality path. `REJECT`, zero payment.
+- Node.js 22
+- npm
 
-## Environment
-
-Never commit real credentials. Copy examples and configure secrets only in backend/deployment env.
+### 1. Download and install
 
 ```bash
+git clone https://github.com/blueskylh/SlabScout.git
+cd SlabScout
+
+npm --prefix backend ci --no-audit --no-fund
+npm --prefix frontend ci --no-audit --no-fund
+
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 ```
 
-Required for local replay:
-
-- `BACKEND_PORT`
-
-Required for live readiness:
-
-- `SLABSCOUT_OPERATOR_TOKEN`
-- `SLABSCOUT_STATE_FILE` — current live persistence is single-instance file state; `DATABASE_URL` is not implemented in this MVP
-- `RENAISS_API_KEY` / `RENAISS_API_SECRET`
-- `MARKET_PROOF_SIGNING_SECRET` / `POLICY_PROOF_SIGNING_SECRET`
-- Circle CLI installed/logged in, `CIRCLE_AGENT_WALLET_ADDRESS`, `MARKET_PROOF_SERVICE_URL`, `MARKET_PROOF_SELLER_ADDRESS`
-- `RESERVATION_ESCROW_ADDRESS`, `AGENT_WALLET_ADDRESS`, `ARC_RPC_URL`
-
-Renaiss and Circle secrets must remain backend-only. Do not create `VITE_` variables for them.
-
-## Local development
+### 2. Start the backend
 
 ```bash
-npm --prefix backend ci --no-audit --no-fund
-npm --prefix frontend ci --no-audit --no-fund
+npm --prefix backend run dev
 ```
 
-Backend:
+### 3. Start the frontend in a second terminal
 
 ```bash
-cd backend
-npm run dev
+npm --prefix frontend run dev
 ```
 
-Frontend:
+Open [http://localhost:5173](http://localhost:5173). The example settings start in Replay mode, so real Circle, Renaiss, and wallet credentials are not needed.
 
-```bash
-cd frontend
-npm run dev
-```
+## Project map
+
+| Folder | What is inside |
+|---|---|
+| [`frontend/`](frontend/) | The web page you see in the demo |
+| [`backend/`](backend/) | The API, card checks, rules, proof checks, and payment controls |
+| [`contracts/`](contracts/) | The Arc Testnet refundable-deposit contract |
+| [`tests/`](tests/) | Automated tests for safe and unsafe paths |
+| [`docs/`](docs/) | Detailed design, deployment, security, and demo notes |
+
+## Safety rules
+
+- **Testnet only.** Mainnet is not supported.
+- **No full card purchase.** The project only demonstrates a tiny proof fee and refundable deposit.
+- **Small fixed limits.** Proof fee: at most `0.001 USDC`; deposit: at most `0.10 USDC`.
+- **Stop on uncertainty.** Missing data, a wrong card, a bad receipt, or an unknown transaction result blocks the next step.
+- **Replay stays honest.** Simulated results never show a fake transaction hash, block number, or “real payment” label.
+- **Secrets stay on the backend.** Never put wallet keys or API secrets in frontend `VITE_` variables or commit them to GitHub.
 
 ## Checks
+
+GitHub Actions runs the same main checks on every pull request:
 
 ```bash
 npm run secret-scan
@@ -121,39 +151,51 @@ BACKEND_PORT=3001 BASE_PATH=/ npm run smoke:backend
 cd contracts && forge build && forge test -vvv
 ```
 
-This execution environment does not have `forge` installed; contract tests are configured for CI / local Foundry environments.
+## More documentation
 
-## API routes
+- [3-minute demo script](docs/DEMO_SCRIPT.md)
+- [How the parts connect](docs/ARCHITECTURE.md)
+- [Deployment guide](docs/DEPLOYMENT.md)
+- [Security and failure cases](docs/THREAT_MODEL.md)
+- [Pitch deck source](docs/PITCH_DECK.md)
+- [Submission checklist](docs/SUBMISSION_CHECKLIST.md)
 
-- `GET /api/status` — runtime status and config-only missing live env list.
-- `GET /api/status/live-readiness` — operator-token protected, read-only live readiness checks; never pays or sends transactions.
-- `GET /api/demo` — trusted offers, default authorization, replay signal, disclosures.
-- `POST /api/scout/run` — full orchestration. Public replay; live requires `x-slabscout-operator-token`.
-- `GET /api/scout/audits` — audit trail.
-- `GET /api/market-proof/quote` — proof service quote.
-- `POST /api/market-proof/prove` — live x402 seller endpoint; uses Circle Gateway middleware, refetches Renaiss server-side, and rejects client-submitted signal/valuation/trades.
+<details>
+<summary><strong>Developer API routes</strong></summary>
 
-Manual `live:e2e` is available for a deployed MVP; the GitHub workflow is readiness-only unless explicitly dispatched with `confirm_spend=I_UNDERSTAND_SPEND_TESTNET_USDC`.
+| Route | Purpose |
+|---|---|
+| `GET /api/status` | Basic app and setup status |
+| `GET /api/demo` | Demo offers, limits, and replay data |
+| `POST /api/scout/run` | Run one SlabScout decision |
+| `GET /api/scout/audits` | Read the decision history |
+| `GET /api/status/live-readiness` | Run read-only checks before Live mode |
+| `GET /api/market-proof/quote` | Read the MarketProof price |
+| `POST /api/market-proof/prove` | Paid MarketProof seller endpoint for Live mode |
 
-## Contract
+</details>
 
-`contracts/ReservationEscrow.sol` locks a refundable Arc Testnet USDC deposit with SafeERC20-style transfer checks. The deploy script rejects non-Arc-Testnet chain IDs and wrong USDC address.
+<details>
+<summary><strong>Live-mode setup</strong></summary>
 
-## Docs
+The public demo does not need this. For a real Arc Testnet run, see the full [deployment guide](docs/DEPLOYMENT.md). You will need:
 
-- `docs/ARCHITECTURE.md`
-- `docs/THREAT_MODEL.md`
-- `docs/DEPLOYMENT.md`
-- `docs/DEMO_SCRIPT.md`
-- `docs/PITCH_DECK.md`
-- `docs/SUBMISSION_CHECKLIST.md`
-- `docs/OPENAPI_NOTES.md`
-- `docs/MANUAL_REVIEW_LOG.md`
-- `docs/DEPENDENCY_RISK.md`
+- backend-only Renaiss credentials;
+- an operator token and a writable single-instance state file;
+- Circle CLI `0.0.6`, logged in to the intended Agent Wallet;
+- funded Arc Testnet wallets and the MarketProof seller address;
+- the deployed escrow address and Arc RPC URL.
 
-## Security notes
+Never commit real credentials or private keys.
 
-- Replay/mock never returns real `paid`, `reserved`, tx hash, block number, or explorer evidence.
-- Live mode fails closed when operator token, writable state file, Circle CLI/session/config, Renaiss secrets, escrow address, wallet funding/allowance, or Arc Testnet checks are missing.
-- Secret scan blocks committed Renaiss/Circle/private keys.
-- Mainnet is not supported.
+</details>
+
+---
+
+<div align="center">
+
+Built for the **Arc Agentic Economy** track with **Renaiss OS Index**, **Circle**, **Arc Testnet**, and **Surf**.
+
+[Open the demo](https://slabscout-800018.surf.computer/) · [Read in Chinese](README_CN.md)
+
+</div>
