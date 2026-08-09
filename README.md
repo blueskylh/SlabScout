@@ -54,6 +54,33 @@ Before it can move any testnet USDC, it checks:
 
 If any required check fails, the answer is **no** and the agent stops.
 
+## Where the card data comes from
+
+SlabScout gets its card data from **[Renaiss OS Index](https://index.renaissos.com/)**.
+
+Think of Renaiss OS Index as a **price guide and market dashboard for collectible cards**. Search for a card and it shows:
+
+- the exact card, set, number, language, and grade;
+- a recent reference price, plus median, average, and a sales-weighted price (VWAP);
+- how many completed sales were found and where they came from;
+- price changes over 7 days, 30 days, and longer periods;
+- a chart of the sales and price trend over time.
+
+The site brings public market data, Renaiss-owned sales, and partner-shop sales into one timeline. In simple terms, it lets you see **the estimated card price and the trades behind that price**, instead of trusting one seller's number.
+
+SlabScout does not blindly copy the large price shown on the page. It also checks the card identity, the different price methods, the number of sources and sales, the last sale date, and the trend. If the data is too thin, too old, or does not match the target card, the agent stops or asks for more proof.
+
+> [!NOTE]
+> Renaiss OS Index is still in Beta and says some card coverage may be incomplete. That is why SlabScout treats its price as useful evidence—not a guaranteed sale price. Replay mode uses a saved Renaiss data snapshot so the public demo stays stable.
+
+<p align="center">
+  <a href="docs/assets/renaiss-index-grey-felt-hat.webp"><img src="docs/assets/renaiss-index-grey-felt-hat.webp" width="49%" alt="Renaiss OS Index page for Pikachu with Grey Felt Hat PSA 10"></a>
+  <a href="docs/assets/renaiss-index-pikachu-ex.webp"><img src="docs/assets/renaiss-index-pikachu-ex.webp" width="49%" alt="Renaiss OS Index page for Pikachu ex PSA 10"></a>
+</p>
+<p align="center"><sub>Two Renaiss OS Index card pages showing reference prices, sale sources, and 30-day trends. Click an image to enlarge it.</sub></p>
+
+[Open Renaiss OS Index](https://index.renaissos.com/) · [Read its pricing methodology](https://index.renaissos.com/methodology)
+
 ## How it works
 
 ```mermaid
@@ -75,7 +102,7 @@ flowchart TD
 |---|---|
 | Public app | [slabscout-800018.surf.computer](https://slabscout-800018.surf.computer/) |
 | Default public mode | Replay — safe, stable, and no real spending |
-| Card data | Renaiss OS Index; Replay uses a fixed snapshot |
+| Card data | [Renaiss OS Index](https://index.renaissos.com/); Replay uses a fixed snapshot |
 | Maximum proof fee | `0.001 USDC` |
 | Maximum refundable deposit | `0.10 USDC` |
 | Network | Arc Testnet only · chain ID `5042002` |

@@ -54,6 +54,33 @@ SlabScout 只遵守一个简单原则：**先检查，再花钱。**
 
 任何一项必要检查失败，AI 都会停止，不再继续花钱。
 
+## 卡牌数据从哪里来？
+
+SlabScout 的卡牌数据来自 **[Renaiss OS Index](https://index.renaissos.com/)**。
+
+你可以把 Renaiss OS Index 理解成一个收藏卡的 **“查价网站 + 行情看板”**。搜索一张卡后，它会告诉你：
+
+- 具体是哪张卡，包括系列、编号、语言和评级；
+- 最近的市场参考价，以及中位价、平均价和按成交数量计算的价格；
+- 最近找到了多少笔成交，这些成交来自哪些市场；
+- 价格在 7 天、30 天和更长时间内涨了还是跌了；
+- 每一笔成交和价格走势在图表上是什么样子。
+
+这个网站会把公开市场数据、Renaiss 自有成交和合作卡店成交放在同一条时间线上。简单来说，它不仅告诉你 **“这张卡大概值多少钱”**，还尽量让你看到 **“这个价格是由哪些成交得出来的”**，而不是只相信某个卖家报出的数字。
+
+SlabScout 不会看到页面上的大数字就直接决定花钱。它还会检查卡牌身份、几种价格算法、数据来源数量、成交数量、最近成交时间和价格走势。如果数据太少、太旧，或者根本不是目标卡，AI 就会停止或要求补充证明。
+
+> [!NOTE]
+> Renaiss OS Index 目前仍是 Beta，官网也说明部分卡牌的数据可能还不完整。因此，SlabScout 只把这里的价格当作重要参考，不会把它当成保证能成交的绝对价格。Replay 模式使用保存好的 Renaiss 数据快照，保证公开演示稳定。
+
+<p align="center">
+  <a href="docs/assets/renaiss-index-grey-felt-hat.webp"><img src="docs/assets/renaiss-index-grey-felt-hat.webp" width="49%" alt="Renaiss OS Index 中的戴灰毡帽皮卡丘 PSA 10 页面"></a>
+  <a href="docs/assets/renaiss-index-pikachu-ex.webp"><img src="docs/assets/renaiss-index-pikachu-ex.webp" width="49%" alt="Renaiss OS Index 中的皮卡丘 ex PSA 10 页面"></a>
+</p>
+<p align="center"><sub>两个 Renaiss OS Index 卡牌页面，展示参考价、成交来源和 30 天价格走势。点击图片可以放大查看。</sub></p>
+
+[打开 Renaiss OS Index](https://index.renaissos.com/) · [查看官方定价方法](https://index.renaissos.com/methodology)
+
 ## 它是怎么工作的？
 
 ```mermaid
@@ -75,7 +102,7 @@ flowchart TD
 |---|---|
 | 在线地址 | [slabscout-800018.surf.computer](https://slabscout-800018.surf.computer/) |
 | 公开默认模式 | Replay：安全、稳定、不花真钱 |
-| 卡牌数据 | 来自 Renaiss OS Index；Replay 使用固定数据快照 |
+| 卡牌数据 | 来自 [Renaiss OS Index](https://index.renaissos.com/)；Replay 使用固定数据快照 |
 | 市场证明费用上限 | `0.001 USDC` |
 | 可退订金上限 | `0.10 USDC` |
 | 网络 | 只支持 Arc Testnet，链 ID 为 `5042002` |
